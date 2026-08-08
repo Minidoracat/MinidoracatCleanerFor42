@@ -1,0 +1,10 @@
+# PZ Lua/JSON 對行尾敏感，統一 LF（CRLF 會讓翻譯檔被引擎靜默忽略）
+*.json text eol=lf
+*.lua text eol=lf
+*.txt text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf
+*.bat text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+mod.info text eol=lf

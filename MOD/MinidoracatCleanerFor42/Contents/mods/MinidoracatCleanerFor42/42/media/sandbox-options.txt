@@ -1,0 +1,137 @@
+VERSION = 1,
+
+/* Minidoracat Cleaner for B42 — 三分頁：一般 / 物品 / 動物；選項 ID 不變，僅分頁與排序 */
+
+/* ============ 一般 ============ */
+
+option MinidoracatCleanerFor42.AllowManualDelete
+{
+    type = boolean,
+    default = true,
+    page = MinidoracatCleanerGeneral,
+    translation = MinidoracatCleanerFor42_AllowManualDelete,
+}
+
+option MinidoracatCleanerFor42.TouchTraceEnabled
+{
+    type = boolean,
+    default = true,
+    page = MinidoracatCleanerGeneral,
+    translation = MinidoracatCleanerFor42_TouchTraceEnabled,
+}
+
+/* ============ 物品清理 ============ */
+
+option MinidoracatCleanerFor42.MaxFloorItemsPerType
+{
+    type = integer,
+    min = 0,
+    max = 10000,
+    default = 100,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_MaxFloorItemsPerType,
+}
+
+option MinidoracatCleanerFor42.MaxFloorItemsPerTypeArea
+{
+    type = integer,
+    min = 0,
+    max = 50000,
+    default = 400,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea,
+}
+
+option MinidoracatCleanerFor42.ScanRadius
+{
+    type = integer,
+    min = 16,
+    max = 128,
+    default = 80,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_ScanRadius,
+}
+
+option MinidoracatCleanerFor42.ScanIntervalSeconds
+{
+    type = integer,
+    min = 10,
+    max = 3600,
+    default = 60,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_ScanIntervalSeconds,
+}
+
+option MinidoracatCleanerFor42.ProtectList
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_ProtectList,
+}
+
+/* ============ 動物清理 ============ */
+
+option MinidoracatCleanerFor42.MaxAnimalsPerGroup
+{
+    type = integer,
+    min = 0,
+    max = 500,
+    default = 50,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_MaxAnimalsPerGroup,
+}
+
+option MinidoracatCleanerFor42.AnimalLimitOverrides
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalLimitOverrides,
+}
+
+option MinidoracatCleanerFor42.MaxZoneAnimalsPerGroup
+{
+    type = integer,
+    min = 0,
+    max = 1000,
+    default = 0,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_MaxZoneAnimalsPerGroup,
+}
+
+option MinidoracatCleanerFor42.AnimalZoneLimitOverrides
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalZoneLimitOverrides,
+}
+
+option MinidoracatCleanerFor42.AnimalGroupList
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalGroupList,
+}
+
+option MinidoracatCleanerFor42.AnimalScanRadius
+{
+    type = integer,
+    min = 16,
+    max = 128,
+    default = 64,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalScanRadius,
+}
+
+option MinidoracatCleanerFor42.AnimalScanIntervalSeconds
+{
+    type = integer,
+    min = 5,
+    max = 600,
+    default = 10,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalScanIntervalSeconds,
+}
