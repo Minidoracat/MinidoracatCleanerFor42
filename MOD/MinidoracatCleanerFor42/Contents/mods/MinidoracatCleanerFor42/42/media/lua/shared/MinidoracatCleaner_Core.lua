@@ -4,7 +4,8 @@ local Cleaner = MinidoracatCleaner
 
 Cleaner.MOD_ID = "MinidoracatCleanerFor42"
 Cleaner.COMMAND_MODULE = "MinidoracatCleaner"
-Cleaner.KEY_TOUCHED = "MIC42_lastTouchedBy"
+-- 註：0.1.4 移除了「最後接觸者」追蹤（與丟棄者幾乎總是同一人、可靠度較低、且多一個 modData
+-- 欄位會讓同型物品更難被壓縮合併）。舊存檔殘留的 MIC42_lastTouchedBy 不再讀取，無需清理。
 Cleaner.KEY_DROPPED = "MIC42_lastDroppedBy"
 
 Cleaner.DEFAULTS = {
@@ -253,11 +254,25 @@ function Cleaner.isEquippedOrWorn(playerObj, item)
         and (playerObj:isEquipped(item) or playerObj:isAttachedItem(item))
 end
 
+-- 手動刪除只擋「最愛」與「裝備／穿戴／掛載中」——都是防手滑的硬保護。
+-- 有內容的容器**不擋**：帶 NeverEmpty tag 的容器（所有鑰匙環）在戰利品生成時若內容為空會被直接
+-- 移除（ItemPickerJava.java:1160），意即世上不存在空鑰匙環，擋掉等於整個系列永遠不能刪。
+-- vanilla 垃圾桶同樣允許銷毀裝滿的容器；改由確認視窗揭露內容物數量，讓玩家自己決定。
 function Cleaner.canManuallyDelete(playerObj, item)
     return item ~= nil
         and not item:isFavorite()
         and not Cleaner.isEquippedOrWorn(playerObj, item)
-        and not Cleaner.hasContents(item)
+end
+
+-- 選取清單中所有容器的內容物總數（供確認視窗揭露風險）
+function Cleaner.countContainedItems(items)
+    local total = 0
+    for _, item in ipairs(items) do
+        if Cleaner.hasContents(item) then
+            total = total + item:getInventory():getItems():size()
+        end
+    end
+    return total
 end
 
 function Cleaner.isSafeFloorCandidate(item, worldObj, protectMatcher)

@@ -9,19 +9,11 @@ local function getTraceLines(item)
     end
     local modData = item:getModData()
     -- modData 是 Kahlua 原生 table：只能用全域 rawget(t,k)，方法式 t:rawget(k) 是 table 索引查找→call nil 爆錯
-    local touched = rawget(modData, Cleaner.KEY_TOUCHED)
     local dropped = rawget(modData, Cleaner.KEY_DROPPED)
-    if (not touched or touched == "") and (not dropped or dropped == "") then
+    if not dropped or dropped == "" then
         return nil
     end
-    local lines = {}
-    if touched and touched ~= "" then
-        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastTouched"), tostring(touched) }
-    end
-    if dropped and dropped ~= "" then
-        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastDropped"), tostring(dropped) }
-    end
-    return lines
+    return { { getText("IGUI_MinidoracatCleaner_LastDropped"), tostring(dropped) } }
 end
 
 local function appendTraceBlock(tooltip, lines)

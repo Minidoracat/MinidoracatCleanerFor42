@@ -1,6 +1,4 @@
 require "MinidoracatCleaner_Core"
-require "TimedActions/ISInventoryTransferAction"
-require "TimedActions/ISGrabItemAction"
 
 local Cleaner = MinidoracatCleaner
 
@@ -122,90 +120,6 @@ function Cleaner.showCleaned(playerObj, payload)
     playerObj:setHaloNote(text, 120, 255, 120, 240)
 end
 
-local function collectCurrentBatch(action, isGrabAction)
-    local result = {}
-    local queued = action.queueList and action.queueList[1]
-    if not queued or not queued.items then
-        return result
-    end
-    for _, queuedItem in ipairs(queued.items) do
-        local item = isGrabAction and queuedItem:getItem() or queuedItem
-        if item then
-            result[#result + 1] = { id = item:getID(), item = item }
-        end
-    end
-    return result
-end
-
-local function reportTouch(action, batch, isGrabAction)
-    if #batch == 0 or not action.character then
-        return
-    end
-
-    if isClient() then
-        local ids = {}
-        for _, record in ipairs(batch) do
-            ids[#ids + 1] = record.id
-        end
-        sendClientCommand(action.character, Cleaner.COMMAND_MODULE, "touch", { ids = ids })
-        return
-    end
-
-    local username = action.character:getUsername()
-    for _, record in ipairs(batch) do
-        local transferred
-        if isGrabAction then
-            transferred = action.character:getInventory():contains(record.item)
-        else
-            transferred = action.destContainer and action.destContainer:contains(record.item)
-        end
-        if transferred then
-            Cleaner.stampItem(record.item, Cleaner.KEY_TOUCHED, username)
-        end
-    end
-end
-
-local function installTouchHooks()
-    if Cleaner._touchHooksInstalled or Cleaner.getOption("TouchTraceEnabled") == false then
-        return
-    end
-    Cleaner._touchHooksInstalled = true
-
-    local originalInventoryPerform = ISInventoryTransferAction.perform
-    function ISInventoryTransferAction:perform()
-        if not isClient() then
-            -- Vanilla SP merges compatible queued actions at the start of perform().
-            self:checkQueueList()
-        end
-        local batch = collectCurrentBatch(self, false)
-        local result = originalInventoryPerform(self)
-        reportTouch(self, batch, false)
-        return result
-    end
-
-    local originalGrabPerform = ISGrabItemAction.perform
-    function ISGrabItemAction:perform()
-        local batch = collectCurrentBatch(self, true)
-        local result = originalGrabPerform(self)
-        reportTouch(self, batch, true)
-        return result
-    end
-end
-
-local function applyTouchAck(args)
-    local playerObj = getPlayer()
-    if not playerObj or not args or type(args.ids) ~= "table" then
-        return
-    end
-    local username = Cleaner.sanitize(args.name)
-    for _, id in ipairs(args.ids) do
-        local found = Cleaner.findAccessibleItem(playerObj, tonumber(id), 1)
-        if found and found.item then
-            rawset(found.item:getModData(), Cleaner.KEY_TOUCHED, username)
-        end
-    end
-end
-
 local function onServerCommand(module, command, args)
     if module ~= Cleaner.COMMAND_MODULE then
         return
@@ -214,12 +128,8 @@ local function onServerCommand(module, command, args)
         Cleaner.showWarning(getPlayer(), args)
     elseif command == "cleaned" then
         Cleaner.showCleaned(getPlayer(), args)
-    elseif command == "touchAck" then
-        applyTouchAck(args)
     end
 end
 
 Events.OnServerCommand.Add(onServerCommand)
 Events.OnTick.Add(onTickWarn)
-Events.OnGameStart.Add(installTouchHooks)
-Events.OnCreatePlayer.Add(installTouchHooks)

@@ -80,33 +80,6 @@ local function deleteItems(playerObj, args)
     logManualDelete(playerObj, removedByType, removed)
 end
 
-local function touchItems(playerObj, args)
-    if Cleaner.getOption("TouchTraceEnabled") == false then
-        return
-    end
-    local ids = normalizeIDs(args)
-    if not ids then
-        return
-    end
-
-    local username = playerObj:getUsername()
-    local acknowledged = {}
-    for _, id in ipairs(ids) do
-        local found = Cleaner.findAccessibleItem(playerObj, id, 1)
-        if found and found.kind == "container" and found.item then
-            Cleaner.stampItem(found.item, Cleaner.KEY_TOUCHED, username)
-            acknowledged[#acknowledged + 1] = id
-        end
-    end
-
-    if #acknowledged > 0 then
-        sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, "touchAck", {
-            ids = acknowledged,
-            name = Cleaner.sanitize(username),
-        })
-    end
-end
-
 local function onClientCommand(module, command, playerObj, args)
     if module ~= Cleaner.COMMAND_MODULE or not playerObj then
         return
@@ -121,8 +94,6 @@ local function onClientCommand(module, command, playerObj, args)
     lastCommandAt[key] = now
     if command == "deleteItems" then
         deleteItems(playerObj, args)
-    elseif command == "touch" then
-        touchItems(playerObj, args)
     end
 end
 

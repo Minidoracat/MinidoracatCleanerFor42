@@ -4,7 +4,6 @@
   "IGUI_MinidoracatCleaner_ConfirmDelete": "「%1」を削除しますか？選択数：%2。元に戻せません。",
   "IGUI_MinidoracatCleaner_WarnItems": "近くに捨てられたアイテムが多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",
   "IGUI_MinidoracatCleaner_WarnAnimals": "近くに清掃対象の動物が多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",
-  "IGUI_MinidoracatCleaner_LastTouched": "最後に触れた人",
   "IGUI_MinidoracatCleaner_LastDropped": "最後に捨てた人",
   "IGUI_MinidoracatCleaner_CleanedItems": "「クリーナー」周辺の過剰なアイテムを自動整理しました：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedAnimals": "「クリーナー」周辺の過剰な動物を自動除去しました：%1 ×%2。",
@@ -21,5 +20,6 @@
   "IGUI_MinidoracatCleaner_BatchSpawned": "%2 を %1 体生成しました",
   "IGUI_MinidoracatCleaner_WarnAnimalsZone": "飼育動物（ゾーン／小屋）が飼育上限を超えています。次回スキャンでも超過している場合、超過分を整理します。",
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "「クリーナー」過剰な飼育動物を整理しました：%1 ×%2。",
-  "IGUI_MinidoracatCleaner_CleanedRemaining": "（周辺に残り %1 体）"
+  "IGUI_MinidoracatCleaner_CleanedRemaining": "（周辺に残り %1 体）",
+  "IGUI_MinidoracatCleaner_ConfirmContains": "注意：選択したコンテナに %1 個のアイテムが入っており、一緒に破棄されます。"
 }

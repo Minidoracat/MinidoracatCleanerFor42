@@ -76,12 +76,21 @@ local function showDeleteDialog(items, playerNum)
         return
     end
 
-    local width = 350
-    local height = 120
-    local x = getPlayerScreenLeft(playerNum) + (getPlayerScreenWidth(playerNum) - width) / 2
-    local y = getPlayerScreenTop(playerNum) + (getPlayerScreenHeight(playerNum) - height) / 2
     local itemName = items[1]:getDisplayName()
     local text = getText("IGUI_MinidoracatCleaner_ConfirmDelete", itemName, #items)
+    -- 容器內還有東西時明確揭露（鑰匙環一定掛著鑰匙、背包可能裝滿戰利品）
+    local contained = Cleaner.countContainedItems(items)
+    local width = 350
+    local height = 120
+    if contained > 0 then
+        -- ISModalDialog.lua:188 把字面 \n 轉成真換行後才呼叫 CalcSize，而 CalcSize 仍以字面 \n
+        -- 分行（:172），等於多行文字一律只算一行高 → 自動撐高不可靠，這裡直接預留第二行空間
+        text = text .. "\n" .. getText("IGUI_MinidoracatCleaner_ConfirmContains", tostring(contained))
+        width = 460
+        height = 150
+    end
+    local x = getPlayerScreenLeft(playerNum) + (getPlayerScreenWidth(playerNum) - width) / 2
+    local y = getPlayerScreenTop(playerNum) + (getPlayerScreenHeight(playerNum) - height) / 2
     -- ISModalDialog.lua:187-210; ISInventoryPane.lua:656-671
     deleteDialog = ISModalDialog:new(
         x,

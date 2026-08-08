@@ -4,7 +4,6 @@
   "IGUI_MinidoracatCleaner_ConfirmDelete": "Delete \"%1\"? Selected quantity: %2. This cannot be undone.",
   "IGUI_MinidoracatCleaner_WarnItems": "Too many dropped items are nearby. Cleanup will begin if the next scan is still over the limit.",
   "IGUI_MinidoracatCleaner_WarnAnimals": "Too many cleanup-eligible animals are nearby. Cleanup will begin if the next scan is still over the limit.",
-  "IGUI_MinidoracatCleaner_LastTouched": "Last touched by",
   "IGUI_MinidoracatCleaner_LastDropped": "Last dropped by",
   "IGUI_MinidoracatCleaner_CleanedItems": "[Cleaner] Automatically removed excess items nearby: %1 x%2.",
   "IGUI_MinidoracatCleaner_CleanedAnimals": "[Cleaner] Automatically removed excess animals nearby: %1 x%2.",
@@ -21,5 +20,6 @@
   "IGUI_MinidoracatCleaner_BatchSpawned": "Spawned %1 x %2",
   "IGUI_MinidoracatCleaner_WarnAnimalsZone": "Ranched animals (zone/hutch) exceed the ranch limit. Excess will be removed if still over at the next scan.",
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "[Cleaner] Removed excess ranched animals: %1 x%2.",
-  "IGUI_MinidoracatCleaner_CleanedRemaining": "(%1 remaining nearby)"
+  "IGUI_MinidoracatCleaner_CleanedRemaining": "(%1 remaining nearby)",
+  "IGUI_MinidoracatCleaner_ConfirmContains": "Warning: the selection includes containers holding %1 item(s) — those will be destroyed too."
 }
