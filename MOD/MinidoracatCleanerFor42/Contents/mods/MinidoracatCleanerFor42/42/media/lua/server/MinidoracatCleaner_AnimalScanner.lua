@@ -278,7 +278,7 @@ local function runAnimalScan(now)
                 local wildRemoved = 0
                 local zonedRemoved = 0
                 for _, plan in ipairs(plans) do
-                    table.sort(plan.list, candidateSort)
+                    Cleaner.sortSafe(plan.list, candidateSort)
                     local planRemoved = 0
                     for _, candidate in ipairs(plan.list) do
                         if planRemoved >= plan.excess or remainingBudget <= 0 then

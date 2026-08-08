@@ -122,7 +122,8 @@ function MinidoracatCleanerPicker:getItemEntries()
             search = string.lower(display .. " " .. fullName),
         }
     end
-    table.sort(cache, function(a, b) return a.label < b.label end)
+    -- 數千筆的大陣列用非遞迴排序（Kahlua table.sort 遞迴深度風險，見 Core.sortSafe）
+    Cleaner.sortSafe(cache, function(a, b) return a.label < b.label end)
     self.itemCache = cache
     return cache
 end

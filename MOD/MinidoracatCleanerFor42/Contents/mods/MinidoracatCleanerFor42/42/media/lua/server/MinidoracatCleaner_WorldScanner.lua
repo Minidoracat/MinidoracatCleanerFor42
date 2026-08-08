@@ -88,11 +88,8 @@ local function buildPeriodicChunks()
             end
         end
     end
-    table.sort(chunks, function(a, b)
-        if a.z ~= b.z then return a.z < b.z end
-        if a.cy ~= b.cy then return a.cy < b.cy end
-        return a.cx < b.cx
-    end)
+    -- 不排序：巢狀迴圈產生的順序本來就是空間連續且確定的；且對「已接近排序」的大陣列
+    -- 呼叫 Kahlua table.sort 會退化成 O(n) 遞迴深度而 stack overflow（見 Core.sortSafe 註解）
     return chunks
 end
 
@@ -211,7 +208,8 @@ local function selectCandidates(list, needed, selected, scope, limit)
             pileRank[pk] = record.id
         end
     end
-    table.sort(list, function(a, b)
+    -- 傾倒攻擊產生的 item ID 多為連號＝已接近排序，必須用非遞迴排序（見 Core.sortSafe）
+    Cleaner.sortSafe(list, function(a, b)
         local ra = pileRank[a.pileKey]
         local rb = pileRank[b.pileKey]
         if ra ~= rb then

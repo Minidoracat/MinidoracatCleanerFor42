@@ -281,6 +281,44 @@ function Cleaner.stampItem(item, key, username)
     end
 end
 
+-- Kahlua 的 table.sort 是遞迴 quicksort，跑在 coroutine 堆疊上（MAX_STACK_SIZE=3000，
+-- Coroutine.java:16）。輸入已接近排序時退化成 O(n) 遞迴深度，數百筆即 stack overflow。
+-- 以下為迭代式 bottom-up merge sort：無遞迴、穩定、O(n log n)。
+function Cleaner.sortSafe(list, comp)
+    local n = #list
+    if n < 2 then
+        return list
+    end
+    local buf = {}
+    local width = 1
+    while width < n do
+        local i = 1
+        while i <= n do
+            local midEnd = i + width - 1
+            if midEnd > n then midEnd = n end
+            local hiEnd = i + width * 2 - 1
+            if hiEnd > n then hiEnd = n end
+            local a, b, k = i, midEnd + 1, i
+            while a <= midEnd and b <= hiEnd do
+                if comp(list[b], list[a]) then
+                    buf[k] = list[b]; b = b + 1
+                else
+                    buf[k] = list[a]; a = a + 1
+                end
+                k = k + 1
+            end
+            while a <= midEnd do buf[k] = list[a]; a = a + 1; k = k + 1 end
+            while b <= hiEnd do buf[k] = list[b]; b = b + 1; k = k + 1 end
+            i = i + width * 2
+        end
+        for j = 1, n do
+            list[j] = buf[j]
+        end
+        width = width * 2
+    end
+    return list
+end
+
 function Cleaner.chebyshevDistance(x1, y1, x2, y2)
     return math.max(math.abs(x1 - x2), math.abs(y1 - y2))
 end
