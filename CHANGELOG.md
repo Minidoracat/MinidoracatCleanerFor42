@@ -4,6 +4,18 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [42.20.2-0.1.2] - 2026-08-08
+
+### 修正
+
+- **鑰匙環無法刪除**：所有鑰匙環（包含純裝飾用的紀念品款，如「鑰匙環 (松樹)」「鑰匙環 (鱷魚)」）都被誤判為受保護物品而不顯示刪除選項。現在改以「容器內是否有東西」判定——空的鑰匙環可以刪除，掛著鑰匙的鑰匙圈仍受保護。
+
+### 變更
+
+- **刪除保護規則調整**：由「排除鑰匙環」改為「排除裝著物品的容器」。此變更同時補上一個原有漏洞——裝滿物品的背包先前可被直接刪除，現在也受保護（先清空才能刪）。
+
+> 技術要點：所有鑰匙環變體都是 capacity 1 的 `InventoryContainer` 且共用 `base:keyring` tag（`container.txt`），無法用 tag 區分裝飾款與功能款。改用 `instanceof(item, "InventoryContainer")` 搭配 `getInventory():isEmpty()` 判定實際內容物；`getInventory()` 僅存在於 `InventoryContainer`（`InventoryContainer.java:49`），故沿用 vanilla 的 `instanceof` 慣例（`ISInventoryPane.lua:967`）而非字串比對 `getCategory()`。
+
 ## [42.20.2-0.1.1] - 2026-08-08
 
 ### 修正

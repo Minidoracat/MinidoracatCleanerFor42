@@ -233,8 +233,18 @@ function Cleaner.log(event, who, x, y, z, detail)
     writeLog(Cleaner.MOD_ID, text)
 end
 
-function Cleaner.isKeyRing(item)
-    return item and (item:getType() == "KeyRing" or item:hasTag(ItemTag.KEY_RING))
+-- 裝著東西的容器不可刪（避免連同內容物一起銷毀）；空容器可刪。
+-- getInventory() 只存在於 InventoryContainer（InventoryContainer.java:49），
+-- 故先用 vanilla 慣用的 instanceof 判定（ISInventoryPane.lua:967 等）再取用。
+-- 註：所有鑰匙環（含 Memento 類的裝飾款，如 KeyRing_PineTree）都是 capacity 1 的容器且
+-- 帶 base:keyring tag，不能用 tag 一律排除——空的裝飾鑰匙環是垃圾，玩家本來就該能刪。
+function Cleaner.hasContents(item)
+    if not item or not instanceof(item, "InventoryContainer") then
+        return false
+    end
+    local inventory = item:getInventory()
+    -- ItemContainer.java:2275
+    return inventory ~= nil and not inventory:isEmpty()
 end
 
 function Cleaner.isEquippedOrWorn(playerObj, item)
@@ -247,7 +257,7 @@ function Cleaner.canManuallyDelete(playerObj, item)
     return item ~= nil
         and not item:isFavorite()
         and not Cleaner.isEquippedOrWorn(playerObj, item)
-        and not Cleaner.isKeyRing(item)
+        and not Cleaner.hasContents(item)
 end
 
 function Cleaner.isSafeFloorCandidate(item, worldObj, protectMatcher)
@@ -257,12 +267,8 @@ function Cleaner.isSafeFloorCandidate(item, worldObj, protectMatcher)
     if Cleaner.isProtectedType(protectMatcher, item:getFullType()) then
         return false
     end
-    if item:getCategory() == "Container" then
-        -- InventoryContainer.java:45-50; ItemContainer.java:2275-2277
-        local inventory = item:getInventory()
-        if inventory and not inventory:isEmpty() then
-            return false
-        end
+    if Cleaner.hasContents(item) then
+        return false
     end
     return true
 end
@@ -409,7 +415,7 @@ local function findOnSquare(square, playerObj, id, seenVehicles)
         if item and item:getID() == id then
             return { item = item, kind = "floor", worldObj = worldObj, square = square }
         end
-        if item and item:getCategory() == "Container" then
+        if item and instanceof(item, "InventoryContainer") then
             local found = containerResult(item:getInventory(), id)
             if found then
                 return found
