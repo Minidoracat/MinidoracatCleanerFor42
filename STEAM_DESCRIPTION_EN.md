@@ -23,7 +23,7 @@ Every cleanup is [b]warned first[/b] and only executed if the area is still over
 [*] [b]Ranches are safe[/b]: ranched animals are [u]never cleaned[/u] by default; named, held/leashed and hooked animals are absolutely protected under any configuration. Set a number only if you want a ceiling on your ranch
 [*] [b]Triple warning[/b]: a persistent red warning above your character (it won't blink out of existence) + a chat system message + an alert sound; a green notice with the remaining count follows the cleanup
 [*] [b]Handler tracking[/b]: records the last player who touched or dropped an item, shown right in the item tooltip — no more guessing who littered
-[*] [b]Cleanup log file[/b]: every warning and cleanup is written to its own log with timestamp, item/species, count, coordinates and the dropper — ready for server admin audits
+[*] [b]Cleanup log file[/b]: every warning and cleanup is written to its own log with timestamp, item/species, count, coordinates and the dropper — ready for server admin audits (path below)
 [*] [b]List builder[/b]: an in-game search tool — look up items and animal groups by keyword ([u]localized name or English ID both work[/u]), pick them, copy the exact values and paste them into the sandbox options. No more transcribing item IDs by hand
 [*] [b]Batch animal spawner[/b]: admin testing tool, right-click to spawn 10/25/50/100 of a chosen animal at once
 [*] [b]Sandbox options[/b]: 14 settings split across three pages (General / Items / Animals), each with an explanation
@@ -39,6 +39,20 @@ Works out of the box; defaults are tuned so normal play virtually never triggers
 [*] Default cleanup species: rat, mouse, rabbit, chicken
 [/list]
 Too strict or too loose? Every value is configurable in the sandbox settings, and you can disable the automatic parts entirely and keep only manual deletion.
+
+[h2]📂 Where to find the cleanup log[/h2]
+File name: [b]<server start time>_MinidoracatCleanerFor42.txt[/b] (e.g. 2026-08-08_19-10_MinidoracatCleanerFor42.txt) — a new file per startup.
+[list]
+[*] [b]Singleplayer / client[/b]: [b]%USERPROFILE%\Zomboid\Logs\[/b]
+[*] [b]Dedicated server[/b]: [b]<cachedir>/Logs/[/b] (defaults to ~/Zomboid/Logs/; if the server was launched with -cachedir=, use that path)
+[/list]
+Entry types (bracket-delimited fields, grep-friendly):
+[list]
+[*] [b][warn][/b] — over the limit, warning issued
+[*] [b][auto_clean][/b] — items removed, with fullType / removed count / dropper
+[*] [b][animal_clean][/b] — animals removed, with group / removed / wild / zoned / scope
+[*] [b][manual_delete][/b] — player deletion, with the acting player and item breakdown
+[/list]
 
 [h2]🔗 MOD series[/h2]
 [list]
