@@ -54,8 +54,10 @@ def build():
     out.append("tags=" + existing.get("tags", TAGS))
     out.append("visibility=" + existing.get("visibility", VISIBILITY))
 
+    # 用 CRLF 寫出：與遊戲內 Workshop 工具上傳時的回寫格式一致，
+    # 避免每次上傳後 git 都跳出只有行尾差異的假修改（.gitattributes 已對應設定，入庫仍為 LF）
     os.makedirs(os.path.dirname(DST), exist_ok=True)
-    with open(DST, "w", encoding="utf-8", newline="\n") as f:
+    with open(DST, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(out) + "\n")
     print("寫出:", DST)
     print("  description 行數:", len(body))
