@@ -1,4 +1,5 @@
 version=1
+id=3779823349
 title=Minidoracat Cleaner for B42
 description=[h1]🧹 Minidoracat Cleaner for B42[/h1]
 description=[h3]By Minidoracat[/h3]
@@ -65,5 +66,8 @@ description=[*] [url=https://www.twitch.tv/minidoracat]Twitch streams[/url]
 description=[/list]
 description=
 description=[b]#cleaner #trash #performance #server #animals #Minidoracat[/b]
+description=
+description=Workshop ID: 3779823349
+description=Mod ID: MinidoracatCleanerFor42
 tags=Build 42;Interface;Items;Multiplayer
 visibility=public

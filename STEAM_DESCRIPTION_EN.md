@@ -63,3 +63,6 @@ Too strict or too loose? Every value is configurable in the sandbox settings, an
 [/list]
 
 [b]#cleaner #trash #performance #server #animals #Minidoracat[/b]
+
+Workshop ID: 3779823349
+Mod ID: MinidoracatCleanerFor42
