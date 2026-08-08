@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [42.20.2-0.1.1] - 2026-08-08
+
+### 修正
+
+- **多人伺服器上週期掃描每輪失敗**：玩家人數較多時，地板物品的週期掃描會因 Lua 堆疊溢位而中斷，導致自動清理不會執行（手動刪除、丟棄當下的即時偵測與動物清理不受影響）。改用非遞迴排序後恢復正常。
+
+> 技術要點：Kahlua 的 `table.sort` 是遞迴 quicksort，跑在 coroutine 堆疊上（`MAX_STACK_SIZE=3000`，`Coroutine.java:16`）；輸入已接近排序時退化成 O(n) 遞迴深度，數百筆即溢位。`buildPeriodicChunks` 產生的 chunk 清單本身即有序（巢狀迴圈依 cy/cx 遞增），掃描半徑 80 時每位玩家每層樓約 441 個 chunk，多人在線穩定觸發。修法：新增 `Cleaner.sortSafe`（迭代式 bottom-up merge sort），移除 `buildPeriodicChunks` 中多餘的排序，並將候選清單與物品快取等可能較大的陣列改用之。
+
 ## [42.20.2-0.1.0] - 2026-08-08
 
 ### 新增
