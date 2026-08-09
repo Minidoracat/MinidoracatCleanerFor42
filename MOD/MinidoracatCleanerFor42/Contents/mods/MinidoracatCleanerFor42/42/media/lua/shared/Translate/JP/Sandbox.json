@@ -1,10 +1,10 @@
 {
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete": "手動削除を許可",
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete_tooltip": "マルチプレイで、一般プレイヤーが自分の所持品または近くのワールドコンテナから選択したアイテムを削除できるようにします。",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "チャンクごとの同種床アイテム上限",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "各 8×8 チャンク内にある同じ fullType の床アイテム上限です。0 でチャンク単位の制限を無効にします。",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "スキャン範囲の同種床アイテム上限",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "スキャン範囲内の全チャンクにある同じ fullType の床アイテム合計上限です。0 で範囲制限を無効にします。",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "区画ごとの地面アイテム上限（通常）",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "8×8 の区画内で、同じ fullType の地面アイテムの上限。今回のプレイ中にプレイヤーが落とした物（投棄者の印が付いていて、高許容リストに載っていない物）だけを数えます。0 でこの上限を無効化します。地面アイテムの清掃が完全に無効になるのは、4 つの上限（通常／高許容 × 区画／範囲）がすべて 0 のときだけです。",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "スキャン範囲の地面アイテム上限（通常）",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "プレイヤー1人のスキャン範囲内で、同じ fullType の地面アイテムの合計上限（プレイヤーごとに個別に集計され、他プレイヤー周辺の数は加算されません）。こちらもプレイヤーが落とした物だけを数えます。0 で範囲制限を無効化します。",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius": "アイテムスキャン半径",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius_tooltip": "定期アイテムスキャンで各プレイヤー周辺のチャンクを集める半径です。単位はマスです。",
   "Sandbox_MinidoracatCleanerFor42_ScanIntervalSeconds": "アイテムスキャン間隔",
@@ -29,5 +29,11 @@
   "Sandbox_MinidoracatCleanerItems": "Minidoracatクリーナー - アイテム",
   "Sandbox_MinidoracatCleanerAnimals": "Minidoracatクリーナー - 動物",
   "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides": "飼育上限の上書き（グループ別）",
-  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "上の「飼育動物の上限」に対するグループ別の例外。例：chicken=80。0＝そのグループの飼育動物は整理しない。グループ名はキーワード可。"
+  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "上の「飼育動物の上限」に対するグループ別の例外。例：chicken=80。0＝そのグループの飼育動物は整理しない。グループ名はキーワード可。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType": "区画ごとの上限（高許容）",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType_tooltip": "高許容アイテムの区画ごとの上限。次の2種類がこの緩い値を使います。①投棄者の印が付いていない物（森林の枝や草など世界生成の物、または本 MOD 導入前から地面にあった物）②下の高許容リストに載せた物。通常の上限とは別に集計されるため、「世界生成の丸太 100 個＋誰かが投棄した丸太 150 個」ではその 150 個の超過分だけが清掃されます。0 で高許容アイテムを一切清掃しません。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea": "スキャン範囲の上限（高許容）",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea_tooltip": "高許容アイテムのスキャン範囲での合計上限（プレイヤーごとに個別集計）。0 で高許容アイテムを範囲制限の対象外にします。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "高許容アイテムリスト",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList_tooltip": "投棄者の印の有無にかかわらず高許容の上限を適用するアイテム。キーワードで指定できます：アイテム ID（例：Base.Log）、英語名、翻訳名（サーバー言語に従う）。半角カンマ・全角カンマ・セミコロンで区切ります。保護リストとの違い：高許容は上限を緩めるだけなので、高許容の上限を超えれば清掃されます。保護リストは決して清掃しません。空欄のままでも問題ありません。印の無いアイテムは元から自動的に高許容になります。（「アイテムの投棄者を記録」がオフのときはどのアイテムにも印が付かないため、このリストだけが適用されます。）"
 }

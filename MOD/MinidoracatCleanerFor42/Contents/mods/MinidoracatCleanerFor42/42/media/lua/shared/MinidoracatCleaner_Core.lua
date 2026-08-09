@@ -12,6 +12,9 @@ Cleaner.DEFAULTS = {
     AllowManualDelete = true,
     MaxFloorItemsPerType = 100,
     MaxFloorItemsPerTypeArea = 400,
+    HighToleranceMaxPerType = 300,
+    HighToleranceMaxPerTypeArea = 2000,
+    HighToleranceList = "",
     ScanRadius = 80,
     ScanIntervalSeconds = 60,
     ProtectList = "",
@@ -35,6 +38,8 @@ Cleaner.CONSTANTS = {
     MANUAL_DELETE_LIMIT = 100,
     WARNING_RADIUS = 30,
     CHUNK_SIZE = 8,
+    -- 警告記錄的閒置回收門檻（幾個掃描間隔沒再被掃到就丟棄）
+    WARN_STALE_INTERVALS = 20,
 }
 
 local function trim(value)
@@ -72,15 +77,23 @@ function Cleaner.parseList(value, fallback)
     return result
 end
 
--- 保護清單支援關鍵字：token 對「fullType／點號後段／英文 DisplayName／伺服器語言翻譯名」做
+-- 關鍵字清單：token 對「fullType／點號後段／英文 DisplayName／伺服器語言翻譯名」做
 -- 不分大小寫子字串比對。翻譯名依伺服器端語言（GameServer.java:595 有 loadFiles；
 -- getItemNameFromFullType＝LuaManager.java:8579）
-function Cleaner.getProtectMatcher()
+function Cleaner.getKeywordMatcher(optionName)
     local tokens = {}
-    for _, token in ipairs(Cleaner.parseList(Cleaner.getOption("ProtectList"))) do
+    for _, token in ipairs(Cleaner.parseList(Cleaner.getOption(optionName))) do
         tokens[#tokens + 1] = string.lower(token)
     end
     return { tokens = tokens, cache = {} }
+end
+
+function Cleaner.getProtectMatcher()
+    return Cleaner.getKeywordMatcher("ProtectList")
+end
+
+function Cleaner.getHighToleranceMatcher()
+    return Cleaner.getKeywordMatcher("HighToleranceList")
 end
 
 local function itemMatchNames(fullType)
@@ -103,7 +116,7 @@ local function itemMatchNames(fullType)
     return names
 end
 
-function Cleaner.isProtectedType(matcher, fullType)
+function Cleaner.matchesType(matcher, fullType)
     if not matcher or #matcher.tokens == 0 or not fullType then
         return false
     end
@@ -279,13 +292,33 @@ function Cleaner.isSafeFloorCandidate(item, worldObj, protectMatcher)
     if not item or not worldObj or item:isFavorite() or worldObj:isIgnoreRemoveSandbox() then
         return false
     end
-    if Cleaner.isProtectedType(protectMatcher, item:getFullType()) then
+    if Cleaner.matchesType(protectMatcher, item:getFullType()) then
         return false
     end
     if Cleaner.hasContents(item) then
         return false
     end
     return true
+end
+
+-- 高容忍桶的歸屬。兩個管道共用同一組高閾值：
+--   ① 身上沒有丟棄者標記 → 世界原生，或 MOD 安裝前就躺在地上的舊物
+--   ② 命中高容忍清單 → 管理員明確指定要放寬的物品
+-- 為什麼用「有沒有標記」而不是判斷物種：引擎其實有完美的判別式
+-- IsoWorldInventoryObject.dropTime（預設 -1.0，只在被丟到地上時賦值；:65,101），原版
+-- 自己就是靠 dropTime > -1 決定要不要自動移除地上物品（IsoGridSquare.java:3284）。
+-- 但它是沒有 getter 的 public instance field，Kahlua 不暴露 → Lua 讀出來是 nil 且不報錯。
+-- 我們自己在伺服器端蓋的丟棄者章，就是同一語意在 Lua 端唯一能取得的近似。
+function Cleaner.isHighTolerance(matcher, item, fullType, stampsEnabled)
+    if Cleaner.matchesType(matcher, fullType) then
+        return true
+    end
+    -- 標記追蹤關閉時沒有任何物品有章，照章判定會讓全部物品落進高容忍桶＝清理形同關閉，
+    -- 故此時只認清單（fail-closed）
+    if not stampsEnabled then
+        return false
+    end
+    return Cleaner.getItemModDataValue(item, Cleaner.KEY_DROPPED) == nil
 end
 
 function Cleaner.getItemModDataValue(item, key)
@@ -379,8 +412,55 @@ local function notifyNearby(command, payload, clientHandler)
 end
 
 -- scope（選填）："zone"＝圈養（圈地/雞舍）觸發，client 端據此換措辭
-function Cleaner.warnNearby(kind, x, y, z, detail, scope)
-    notifyNearby("warn", { kind = kind, x = x, y = y, z = z, detail = detail, scope = scope }, Cleaner.showWarning)
+-- count/limit（選填）：實際偵測數與當前上限，client 端顯示於警告文字讓玩家知道差多少
+function Cleaner.warnNearby(kind, x, y, z, detail, scope, count, limit)
+    notifyNearby("warn", { kind = kind, x = x, y = y, z = z, detail = detail, scope = scope, count = count, limit = limit }, Cleaner.showWarning)
+end
+
+-- 只送給指定玩家。「某位玩家周邊超量」這類訊息本來就是對他個人講的：
+-- 用 notifyNearby 廣播的話，相鄰的兩位玩家各自超標時會互相收到對方那則（重複洗版），
+-- 更糟的是錨點若離該玩家超過 WARNING_RADIUS，當事人反而收不到自己的通知
+local function notifyPlayer(playerObj, command, payload, clientHandler)
+    if not playerObj then
+        return
+    end
+    payload.x = playerObj:getX()
+    payload.y = playerObj:getY()
+    payload.z = playerObj:getZ()
+    if isServer() then
+        sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, command, payload)
+    elseif clientHandler then
+        clientHandler(playerObj, payload)
+    end
+end
+
+function Cleaner.warnPlayerOnly(playerObj, kind, detail, count, limit, scope)
+    notifyPlayer(playerObj, "warn",
+        { kind = kind, detail = detail, count = count, limit = limit, scope = scope },
+        Cleaner.showWarning)
+end
+
+function Cleaner.notifyCleanedPlayerOnly(playerObj, kind, detail, count, scope, remaining)
+    notifyPlayer(playerObj, "cleaned",
+        { kind = kind, detail = detail, count = count, scope = scope, remaining = remaining },
+        Cleaner.showCleaned)
+end
+
+-- normal 與 high 是各自獨立的兩組上限，任一為正就仍需掃描；四個全為 0 才是「完全關閉」。
+-- （只看 normal 兩項會讓「normal=0、high>0」的設定意外整個停擺）
+function Cleaner.isFloorCleaningDisabled()
+    local names = {
+        "MaxFloorItemsPerType",
+        "MaxFloorItemsPerTypeArea",
+        "HighToleranceMaxPerType",
+        "HighToleranceMaxPerTypeArea",
+    }
+    for _, name in ipairs(names) do
+        if (tonumber(Cleaner.getOption(name)) or 0) > 0 then
+            return false
+        end
+    end
+    return true
 end
 
 function Cleaner.notifyCleaned(kind, detail, count, x, y, z, scope, remaining)

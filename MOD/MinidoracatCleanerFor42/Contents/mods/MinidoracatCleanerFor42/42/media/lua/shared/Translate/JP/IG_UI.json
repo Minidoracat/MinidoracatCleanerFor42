@@ -21,5 +21,6 @@
   "IGUI_MinidoracatCleaner_WarnAnimalsZone": "飼育動物（ゾーン／小屋）が飼育上限を超えています。次回スキャンでも超過している場合、超過分を整理します。",
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "「クリーナー」過剰な飼育動物を整理しました：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "（周辺に残り %1 体）",
-  "IGUI_MinidoracatCleaner_ConfirmContains": "注意：選択したコンテナに %1 個のアイテムが入っており、一緒に破棄されます。"
+  "IGUI_MinidoracatCleaner_ConfirmContains": "注意：選択したコンテナに %1 個のアイテムが入っており、一緒に破棄されます。",
+  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）"
 }

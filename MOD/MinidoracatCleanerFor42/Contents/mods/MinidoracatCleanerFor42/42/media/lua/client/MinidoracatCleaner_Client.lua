@@ -82,7 +82,17 @@ function Cleaner.showWarning(playerObj, payload)
     local text = getText(key)
     local detail = describeDetail(payload.kind, payload.detail)
     if detail then
-        text = text .. " (" .. detail .. ")"
+        -- 帶上實際偵測數與當前上限，玩家才知道超出多少、要清掉多少才會停
+        if payload.count and payload.limit then
+            text = text .. " " .. getText(
+                "IGUI_MinidoracatCleaner_WarnDetail",
+                detail,
+                tostring(payload.count),
+                tostring(payload.limit)
+            )
+        else
+            text = text .. " (" .. detail .. ")"
+        end
     end
     local now = getTimestampMs()
     activeWarn = {

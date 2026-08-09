@@ -1,10 +1,10 @@
 {
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete": "允许手动删除",
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete_tooltip": "在多人游戏中，允许普通玩家删除自己物品栏或附近世界容器内选中的物品。",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "每区块同类地面物品上限",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "每个 8×8 区块内，相同 fullType 的地面物品数量上限。设为 0 可停用每区块限制。",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "扫描区域同类地面物品上限",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "整个扫描区域所有区块内，相同 fullType 的地面物品总量上限。设为 0 可停用区域限制。",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "每区块同类地面物品上限（一般）",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "每个 8×8 区块内，相同 fullType 的地面物品数量上限。只计入“本次游玩中被玩家丢下”的物品（身上有丢弃者标记、且未列入高容忍清单）。设为 0 可停用本项限制；四个上限（一般／高容忍 × 每区块／区域）全为 0 才会完全停用地面物品清理。",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "扫描区域同类地面物品上限（一般）",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "单一玩家扫描区域内，相同 fullType 的地面物品总量上限（每位玩家各自计算，不会把其他玩家周边的数量算进来）。同样只计入被玩家丢下的物品。设为 0 可停用区域限制。",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius": "物品扫描半径",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius_tooltip": "周期扫描时，以每位玩家为中心收集区块的方格半径。",
   "Sandbox_MinidoracatCleanerFor42_ScanIntervalSeconds": "物品扫描间隔",
@@ -29,5 +29,11 @@
   "Sandbox_MinidoracatCleanerItems": "Minidoracat清理器 - 物品",
   "Sandbox_MinidoracatCleanerAnimals": "Minidoracat清理器 - 动物",
   "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides": "圈养上限覆写（逐群组）",
-  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "对上方“圈养动物上限”的逐群组例外。例如 chicken=80 表示圈养鸡上限 80，其他群组维持默认；设 0 表示该群组圈养永不清理。群组名支持关键字（如“鸡=80”）。"
+  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "对上方“圈养动物上限”的逐群组例外。例如 chicken=80 表示圈养鸡上限 80，其他群组维持默认；设 0 表示该群组圈养永不清理。群组名支持关键字（如“鸡=80”）。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType": "每区块上限（高容忍）",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType_tooltip": "高容忍物品的每区块上限。两种物品会用这组较宽松的数值：①身上没有丢弃者标记的（世界原生的枝条草丛，或本 MOD 安装前就躺在地上的旧物）②列进下方高容忍清单的。与一般上限分开计数——“100 个世界原生的原木＋150 个某人倒的原木”只会清那 150 个里超额的部分。0＝高容忍物品永不清理。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea": "扫描区域上限（高容忍）",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea_tooltip": "高容忍物品的扫描区域总量上限（每位玩家各自计算）。0＝高容忍物品永不受区域限制。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "高容忍物品清单",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList_tooltip": "指定要套用高容忍上限的物品，不论身上有没有丢弃者标记。支持关键字：物品 ID（如 Base.Log）、英文名称或翻译名称（依服务器语言，例如输入“木板”）。半角逗号、全角逗号或分号分隔。与保护清单的区别：高容忍只是放宽上限，超过高容忍上限仍会被清理；保护清单则是永不清理。留空也没关系——无标记的物品本来就会自动走高容忍。（若“记录物品丢弃者”关闭，所有物品都不会有标记，此时只认本清单。）"
 }

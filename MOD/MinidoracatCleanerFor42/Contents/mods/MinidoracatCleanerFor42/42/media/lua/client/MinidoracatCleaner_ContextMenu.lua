@@ -30,7 +30,7 @@ local function deleteLocally(playerObj, items)
         for fullType, count in pairs(removedByType) do
             details[#details + 1] = Cleaner.sanitize(fullType) .. "=" .. count
         end
-        table.sort(details)
+        Cleaner.sortSafe(details, function(a, b) return a < b end)
         local square = playerObj:getCurrentSquare()
         Cleaner.log(
             "manual_delete",

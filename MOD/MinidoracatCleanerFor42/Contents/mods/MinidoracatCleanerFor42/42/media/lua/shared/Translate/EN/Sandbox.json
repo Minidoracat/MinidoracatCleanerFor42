@@ -1,10 +1,10 @@
 {
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete": "Allow manual deletion",
   "Sandbox_MinidoracatCleanerFor42_AllowManualDelete_tooltip": "Allow ordinary players to delete selected items from their own inventory or nearby world containers in multiplayer.",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "Floor items per type per chunk",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "Maximum number of floor items with the same fullType in each 8 by 8 chunk. Set to 0 to disable the per-chunk limit.",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "Floor items per type in scan area",
-  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "Maximum number of floor items with the same fullType across all chunks in the scan area. Set to 0 to disable the area limit.",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType": "Per-Chunk Floor Item Limit (Normal)",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerType_tooltip": "Maximum number of floor items sharing the same fullType inside one 8x8 chunk. Only counts items dropped by a player during this playthrough (they carry a dropper stamp and are not on the high tolerance list). Set to 0 to disable this limit; floor item cleaning is only fully disabled when all four limits (normal / high tolerance x per-chunk / area) are 0.",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea": "Scan Area Floor Item Limit (Normal)",
+  "Sandbox_MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea_tooltip": "Maximum number of floor items sharing the same fullType across a single player's scan area (counted separately for each player, so other players' surroundings never add to your total). Also counts only player-dropped items. Set to 0 to disable the area limit.",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius": "Item scan radius",
   "Sandbox_MinidoracatCleanerFor42_ScanRadius_tooltip": "Radius in squares used to collect chunks around each player for periodic item scans.",
   "Sandbox_MinidoracatCleanerFor42_ScanIntervalSeconds": "Item scan interval",
@@ -29,5 +29,11 @@
   "Sandbox_MinidoracatCleanerItems": "Minidoracat Cleaner - Items",
   "Sandbox_MinidoracatCleanerAnimals": "Minidoracat Cleaner - Animals",
   "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides": "Ranched limit overrides (per group)",
-  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "Per-group exceptions to the ranched-animal limit above. Example: chicken=80 lets ranched chickens reach 80 while other groups keep the default; 0 = never clean that group's ranched animals. Group names accept keywords."
+  "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "Per-group exceptions to the ranched-animal limit above. Example: chicken=80 lets ranched chickens reach 80 while other groups keep the default; 0 = never clean that group's ranched animals. Group names accept keywords.",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType": "Per-Chunk Limit (High Tolerance)",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType_tooltip": "Per-chunk limit for high tolerance items. Two kinds of item use this looser value: (1) items with no dropper stamp - world generated branches and grass, or anything already lying on the ground before this mod was installed; (2) items on the high tolerance list below. Counted separately from the normal limit, so 100 world generated logs plus 150 logs someone dumped only cleans the excess among those 150. Set to 0 to never clean high tolerance items.",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea": "Scan Area Limit (High Tolerance)",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea_tooltip": "Scan area total for high tolerance items (counted separately for each player). Set to 0 to exempt high tolerance items from the area limit.",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "High Tolerance Item List",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceList_tooltip": "Items that should use the high tolerance limits regardless of whether they carry a dropper stamp. Accepts keywords: item ID (e.g. Base.Log), English name or translated name (following the server language). Separate with commas, full width commas or semicolons. Difference from the protection list: high tolerance only raises the limit, so anything above it still gets cleaned, whereas the protection list means never clean. Leaving this empty is fine - unstamped items already go to high tolerance automatically. (When \"Log Item Dropper\" is off no item carries a stamp, so only this list applies.)"
 }

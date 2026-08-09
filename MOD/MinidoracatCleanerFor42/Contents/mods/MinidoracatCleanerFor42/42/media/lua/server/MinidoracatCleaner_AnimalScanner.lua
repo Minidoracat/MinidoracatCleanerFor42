@@ -120,11 +120,14 @@ local function getAnimalGroup(animal)
     return string.lower(tostring(group))
 end
 
-local function warnBucket(bucket, now, scope)
+local function warnBucket(bucket, now, scope, count, limit)
     local first = warned[bucket.key]
     if not first then
         warned[bucket.key] = now
-        Cleaner.warnNearby("animals", bucket.x, bucket.y, bucket.z, bucket.group, scope)
+        -- 定向送給這個 bucket 所屬的玩家。bucket.x/y/z 是「該群第一隻動物」的位置，可能離
+        -- 該玩家最遠到 AnimalScanRadius（預設 64）——遠超警告廣播半徑 30，
+        -- 用廣播的話當事人反而收不到自己那則，動物卻照樣被清
+        Cleaner.warnPlayerOnly(bucket.playerObj, "animals", bucket.group, count, limit, scope)
         Cleaner.log(
             "warn",
             "system",
@@ -132,6 +135,7 @@ local function warnBucket(bucket, now, scope)
             bucket.y,
             bucket.z,
             "kind=animals group=" .. Cleaner.sanitize(bucket.group) .. " scope=" .. Cleaner.sanitize(scope)
+                .. " count=" .. tostring(count) .. " limit=" .. tostring(limit)
         )
         return false
     end
@@ -149,9 +153,28 @@ local function candidateSort(a, b)
     return a.order < b.order
 end
 
+local function hasAnyAnimalLimit(defaultLimit, zoneLimit, overrides, zoneOverrides)
+    if defaultLimit > 0 or zoneLimit > 0 then
+        return true
+    end
+    for _, value in pairs(overrides) do
+        if value > 0 then return true end
+    end
+    for _, value in pairs(zoneOverrides) do
+        if value > 0 then return true end
+    end
+    return false
+end
+
 local function runAnimalScan(now)
     local defaultLimit = tonumber(Cleaner.getOption("MaxAnimalsPerGroup")) or Cleaner.DEFAULTS.MaxAnimalsPerGroup
-    if defaultLimit == 0 then
+    -- 圈養獨立上限：0＝不清理圈養（完整保護，預設）
+    local zoneLimit = tonumber(Cleaner.getOption("MaxZoneAnimalsPerGroup")) or 0
+    local overrides = Cleaner.getAnimalLimitOverrides()
+    local zoneOverrides = Cleaner.getAnimalZoneLimitOverrides()
+    -- 散養、圈養與逐群組覆寫是各自獨立的上限；只檢查 MaxAnimalsPerGroup 會讓
+    -- 「散養 0 ＋ 圈養 80」或「散養 0 ＋ rat=20 覆寫」這類設定意外整個停擺
+    if not hasAnyAnimalLimit(defaultLimit, zoneLimit, overrides, zoneOverrides) then
         warned = {}
         return
     end
@@ -162,11 +185,7 @@ local function runAnimalScan(now)
     end
 
     local radius = tonumber(Cleaner.getOption("AnimalScanRadius")) or Cleaner.DEFAULTS.AnimalScanRadius
-    -- 圈養獨立上限：0＝不清理圈養（完整保護，預設）
-    local zoneLimit = tonumber(Cleaner.getOption("MaxZoneAnimalsPerGroup")) or 0
     local allowedGroups = Cleaner.getAnimalGroupSet()
-    local overrides = Cleaner.getAnimalLimitOverrides()
-    local zoneOverrides = Cleaner.getAnimalZoneLimitOverrides()
     local zoneCache = buildZoneCache()
     local buckets = {}
     local animalsByKey = {}
@@ -190,6 +209,7 @@ local function runAnimalScan(now)
                         bucket = {
                             key = key,
                             group = group,
+                            playerObj = nearest,
                             count = 0,
                             zoneCount = 0,
                             protected = 0,
@@ -243,7 +263,9 @@ local function runAnimalScan(now)
     for _, bucket in pairs(buckets) do
         orderedBuckets[#orderedBuckets + 1] = bucket
     end
-    table.sort(orderedBuckets, function(a, b) return a.key < b.key end)
+    -- 一律用 sortSafe，全庫零 table.sort（Kahlua 的 table.sort 是遞迴 quicksort，
+    -- 對已接近排序的輸入會退化成 O(n) 遞迴深度而 stack overflow，見 Core.sortSafe）
+    Cleaner.sortSafe(orderedBuckets, function(a, b) return a.key < b.key end)
 
     local remainingBudget = C.ANIMALS_PER_ROUND
     for _, bucket in ipairs(orderedBuckets) do
@@ -255,16 +277,22 @@ local function runAnimalScan(now)
         if bucketZoneLimit == nil then
             bucketZoneLimit = zoneLimit
         end
-        local strayOver = bucket.count > limit
+        -- limit 為 0 ＝ 該群組散養不清理（與圈養同語意）。少了這道 > 0 檢查，
+        -- 「散養 0 ＋ 圈養 80」的設定會變成 count > 0 恆為真，把散養全數清光
+        local strayOver = limit > 0 and bucket.count > limit
         local zoneOver = bucketZoneLimit > 0 and bucket.zoneCount > bucketZoneLimit
         if not strayOver and not zoneOver then
             warned[bucket.key] = nil
         else
-            local emergency = bucket.count > C.ANIMAL_EMERGENCY_MULTIPLIER * limit
-                or (bucketZoneLimit > 0 and bucket.zoneCount > C.ANIMAL_EMERGENCY_MULTIPLIER * bucketZoneLimit)
+            -- 緊急加速只對「真的超標的那一側」成立，否則 limit=0 時會恆為真
+            local emergency = (strayOver and bucket.count > C.ANIMAL_EMERGENCY_MULTIPLIER * limit)
+                or (zoneOver and bucket.zoneCount > C.ANIMAL_EMERGENCY_MULTIPLIER * bucketZoneLimit)
             -- 觸發來源：stray（散養）／zone（圈養：圈地/雞舍）／both（同時）——警告措辭與 log 據此區分
             local scope = (strayOver and zoneOver) and "both" or (zoneOver and "zone" or "stray")
-            local confirmed = emergency or warnBucket(bucket, now, scope)
+            -- 顯示觸發那一側的數字：純圈養超標就報圈養數，其餘（含 both）報散養數
+            local warnCount = (scope == "zone") and bucket.zoneCount or bucket.count
+            local warnLimit = (scope == "zone") and bucketZoneLimit or limit
+            local confirmed = emergency or warnBucket(bucket, now, scope, warnCount, warnLimit)
             if confirmed and remainingBudget > 0 then
                 -- 散養超額先清，圈養超額其次；兩邊各自刪到剩各自的上限
                 local plans = {}
@@ -322,7 +350,8 @@ local function runAnimalScan(now)
                             .. " scope=" .. cleanedScope
                     )
                     local remaining = (bucket.count - (removed - zonedRemoved)) + (bucket.zoneCount - zonedRemoved)
-                    Cleaner.notifyCleaned("animals", bucket.group, removed, bucket.x, bucket.y, bucket.z, cleanedScope, remaining)
+                    -- 與警告同理：定向送給 bucket 所屬玩家，而不是以動物群位置為圓心廣播
+                    Cleaner.notifyCleanedPlayerOnly(bucket.playerObj, "animals", bucket.group, removed, cleanedScope, remaining)
                 else
                     -- 候選在重驗時全數失效（極少見的競態）：留一行診斷
                     Cleaner.log(

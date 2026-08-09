@@ -9,6 +9,9 @@ local scanQueue = {}
 local activeJob = nil
 local dirtyChunks = {}
 local warned = {}
+-- 區域(area)超標的警告狀態，與 chunk 分開：key = onlineID:username|bucket|fullType，
+-- 一位玩家、一個桶、一種物品只發一則警告（不再是區域內每個含該物品的區塊各發一則）
+local areaWarned = {}
 local deleteQueue = {}
 local deleteHead = 1
 local pendingDeleteIDs = {}
@@ -20,14 +23,33 @@ local function chunkKey(cx, cy, z)
     return tostring(cx) .. "," .. tostring(cy) .. "," .. tostring(z)
 end
 
-local function hotspotKey(key, fullType)
-    return key .. "|" .. fullType
+-- 兩個計數桶，各自比對各自的上限：
+--   normal＝本次遊玩中被玩家丟下的（身上有丟棄者標記，且沒被列進高容忍清單）
+--   high  ＝世界原生／MOD 安裝前的舊物（無標記），或管理員列進高容忍清單的
+-- 分桶的意義：「100 顆世界原生的原木 ＋ 150 顆某人倒的原木」只會清那 150 顆裡超額的部分
+local BUCKETS = { "normal", "high" }
+
+local function hotspotKey(key, bucketName, fullType)
+    return key .. "|" .. bucketName .. "|" .. fullType
 end
 
-local function makeJob(kind, chunks)
+local function makeJob(kind, chunks, players)
     local chunkSet = {}
     for _, chunk in ipairs(chunks) do
         chunkSet[chunkKey(chunk.cx, chunk.cy, chunk.z)] = chunk
+    end
+    -- regionCount 依玩家分開累計。舊版把所有線上玩家的區塊併成單一總數，於是「掃描區域上限」
+    -- 實際上是全服總和：地圖另一頭的人砍樹會害你這邊跳警告；而且玩家一走動聯集就變，
+    -- 總數在上限附近震盪 → 警告記錄反覆清除重建 → 永遠等不到「下一輪仍超標」那一輪，
+    -- 結果是無限刷警告卻從不執行清理（正式服 log：warn 571 筆、對應 auto_clean 0 筆）。
+    players = players or {}
+    local buckets = {}
+    for _, bucketName in ipairs(BUCKETS) do
+        local regionCount = {}
+        for index = 1, #players do
+            regionCount[index] = {}
+        end
+        buckets[bucketName] = { counts = {}, candidates = {}, regionCount = regionCount }
     end
     return {
         kind = kind,
@@ -35,10 +57,11 @@ local function makeJob(kind, chunks)
         chunkSet = chunkSet,
         chunkIndex = 1,
         squareIndex = 0,
-        counts = {},
-        regionCount = {},
-        candidates = {},
+        buckets = buckets,
+        players = players,
         protectSet = Cleaner.getProtectMatcher(),
+        highSet = Cleaner.getHighToleranceMatcher(),
+        stampsEnabled = Cleaner.getOption("TouchTraceEnabled") ~= false,
     }
 end
 
@@ -46,8 +69,7 @@ function Cleaner.markDirty(square)
     if not square then
         return
     end
-    if tonumber(Cleaner.getOption("MaxFloorItemsPerType")) == 0
-        and tonumber(Cleaner.getOption("MaxFloorItemsPerTypeArea")) == 0 then
+    if Cleaner.isFloorCleaningDisabled() then
         return
     end
     local cx = math.floor(square:getX() / C.CHUNK_SIZE)
@@ -64,9 +86,10 @@ end
 
 local function buildPeriodicChunks()
     local chunks = {}
-    local seen = {}
+    local index = {}
+    local players = Cleaner.getActivePlayers()
     local radius = tonumber(Cleaner.getOption("ScanRadius")) or Cleaner.DEFAULTS.ScanRadius
-    for _, playerObj in ipairs(Cleaner.getActivePlayers()) do
+    for playerIndex, playerObj in ipairs(players) do
         local minCX = math.floor((playerObj:getX() - radius) / C.CHUNK_SIZE)
         local maxCX = math.floor((playerObj:getX() + radius) / C.CHUNK_SIZE)
         local minCY = math.floor((playerObj:getY() - radius) / C.CHUNK_SIZE)
@@ -80,28 +103,36 @@ local function buildPeriodicChunks()
             for cy = minCY, maxCY do
                 for cx = minCX, maxCX do
                     local key = chunkKey(cx, cy, z)
-                    if not seen[key] then
-                        seen[key] = true
-                        chunks[#chunks + 1] = { cx = cx, cy = cy, z = z }
+                    local chunk = index[key]
+                    if not chunk then
+                        chunk = { cx = cx, cy = cy, z = z, owners = {} }
+                        index[key] = chunk
+                        chunks[#chunks + 1] = chunk
                     end
+                    -- 區塊仍去重（玩家聚集時不重複掃描），但記下它屬於哪幾位玩家的區域，
+                    -- 供 regionCount 分開累計。同一玩家同一 key 只會走到這裡一次（z 不重複）
+                    chunk.owners[#chunk.owners + 1] = playerIndex
                 end
             end
         end
     end
     -- 不排序：巢狀迴圈產生的順序本來就是空間連續且確定的；且對「已接近排序」的大陣列
     -- 呼叫 Kahlua table.sort 會退化成 O(n) 遞迴深度而 stack overflow（見 Core.sortSafe 註解）
-    return chunks
+    return chunks, players
 end
 
 local function queuePeriodicScan(now)
     if periodicQueued then
         return
     end
-    local chunks = buildPeriodicChunks()
+    local chunks, players = buildPeriodicChunks()
     if #chunks == 0 then
+        -- 無人在線時不會有 periodic job，也就不會跑到 finishJob 的 area prune，
+        -- 記錄會殘留到下一批玩家上線；在這裡直接清空
+        areaWarned = {}
         return
     end
-    scanQueue[#scanQueue + 1] = makeJob("periodic", chunks)
+    scanQueue[#scanQueue + 1] = makeJob("periodic", chunks, players)
     periodicQueued = true
     lastPeriodicAt = now
 end
@@ -113,18 +144,18 @@ local function promoteDirtyChunks(now)
             ready[#ready + 1] = { key = key, chunk = chunk }
         end
     end
-    table.sort(ready, function(a, b) return a.key < b.key end)
+    Cleaner.sortSafe(ready, function(a, b) return a.key < b.key end)
     for _, entry in ipairs(ready) do
         dirtyChunks[entry.key] = nil
         scanQueue[#scanQueue + 1] = makeJob("dirty", { entry.chunk })
     end
 end
 
-local function addCandidate(job, key, fullType, item, square)
-    local byType = job.candidates[key]
+local function addCandidate(bucket, key, fullType, item, square)
+    local byType = bucket.candidates[key]
     if not byType then
         byType = {}
-        job.candidates[key] = byType
+        bucket.candidates[key] = byType
     end
     local list = byType[fullType]
     if not list then
@@ -145,56 +176,94 @@ end
 
 local function scanSquare(job, chunk, square)
     local key = chunkKey(chunk.cx, chunk.cy, chunk.z)
-    local counts = job.counts[key]
-    if not counts then
-        counts = {}
-        job.counts[key] = counts
-    end
-
     local worldObjects = square:getWorldObjects()
     for index = 0, worldObjects:size() - 1 do
         local worldObj = worldObjects:get(index)
         local item = worldObj and worldObj:getItem()
         local fullType = item and item:getFullType()
         if fullType then
+            local bucketName = Cleaner.isHighTolerance(job.highSet, item, fullType, job.stampsEnabled)
+                and "high" or "normal"
+            local bucket = job.buckets[bucketName]
+            local counts = bucket.counts[key]
+            if not counts then
+                counts = {}
+                bucket.counts[key] = counts
+            end
             counts[fullType] = (counts[fullType] or 0) + 1
-            if job.kind == "periodic" then
-                job.regionCount[fullType] = (job.regionCount[fullType] or 0) + 1
+            if job.kind == "periodic" and chunk.owners then
+                for _, owner in ipairs(chunk.owners) do
+                    local ownerCount = bucket.regionCount[owner]
+                    if ownerCount then
+                        ownerCount[fullType] = (ownerCount[fullType] or 0) + 1
+                    end
+                end
             end
             if Cleaner.isSafeFloorCandidate(item, worldObj, job.protectSet) then
-                addCandidate(job, key, fullType, item, square)
+                addCandidate(bucket, key, fullType, item, square)
             end
         end
     end
 end
 
-local function ensureWarning(key, chunk, fullType, now)
+local function warnInterval()
+    return (tonumber(Cleaner.getOption("ScanIntervalSeconds")) or Cleaner.DEFAULTS.ScanIntervalSeconds) * 1000
+end
+
+local function ensureWarning(key, chunk, fullType, count, limit, now)
     local record = warned[key]
     if not record then
-        record = { time = now, chunk = false, area = false }
+        record = { time = now, lastSeen = now }
         warned[key] = record
         local x = chunk.cx * C.CHUNK_SIZE + C.CHUNK_SIZE / 2
         local y = chunk.cy * C.CHUNK_SIZE + C.CHUNK_SIZE / 2
-        Cleaner.warnNearby("items", x, y, chunk.z, fullType)
-        Cleaner.log("warn", "system", x, y, chunk.z, "kind=items fullType=" .. Cleaner.sanitize(fullType))
+        Cleaner.warnNearby("items", x, y, chunk.z, fullType, nil, count, limit)
+        Cleaner.log("warn", "system", x, y, chunk.z,
+            "kind=items scope=chunk fullType=" .. Cleaner.sanitize(fullType)
+                .. " count=" .. count .. " limit=" .. limit)
     end
-    local interval = (tonumber(Cleaner.getOption("ScanIntervalSeconds")) or Cleaner.DEFAULTS.ScanIntervalSeconds) * 1000
-    return now - record.time >= interval
+    return now - record.time >= warnInterval()
 end
 
-local function queueVictim(record, scope, limit)
+-- 帶上 username：B42 的 onlineID 是可回收重用的連線槽（GameServer.java:2638,3006），
+-- 只用 ID 當 key 時新玩家可能撿到前一位玩家的舊 timestamp，導致首次掃描就直接進清理而沒警告
+local function areaWarnKey(playerObj, bucketName, fullType)
+    return tostring(playerObj:getOnlineID()) .. ":" .. Cleaner.sanitize(playerObj:getUsername())
+        .. "|" .. bucketName .. "|" .. fullType
+end
+
+-- 區域超標：整個掃描區域、每位玩家、每種物品只發**一則**警告，錨在該玩家自身位置。
+-- 舊版對區域內每個含該物品的區塊各發一則（條件只是該區塊有 ≥1 件），玩家附近有幾個
+-- 這種區塊就被洗幾行完全相同的訊息。
+local function ensureAreaWarning(key, playerObj, fullType, count, limit, now)
+    local record = areaWarned[key]
+    if not record then
+        record = { time = now }
+        areaWarned[key] = record
+        local x, y, z = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+        Cleaner.warnPlayerOnly(playerObj, "items", fullType, count, limit)
+        Cleaner.log("warn", playerObj:getUsername(), x, y, z,
+            "kind=items scope=area fullType=" .. Cleaner.sanitize(fullType)
+                .. " count=" .. count .. " limit=" .. limit)
+    end
+    return now - record.time >= warnInterval()
+end
+
+local function queueVictim(record, scope, limit, bucketName)
     if pendingDeleteIDs[record.id] then
         return false
     end
     pendingDeleteIDs[record.id] = true
-    -- 記錄觸發 scope 與當時閾值，供 processDeleteQueue 刪除前 live recount（避免用過期數量刪到低於閾值）
+    -- 記錄觸發 scope、當時閾值與所屬桶，供 processDeleteQueue 刪除前 live recount
+    -- （避免用過期數量刪到低於閾值；recount 必須只數同一個桶的物品）
     record.scope = scope
     record.limit = limit
+    record.bucket = bucketName
     deleteQueue[#deleteQueue + 1] = record
     return true
 end
 
-local function selectCandidates(list, needed, selected, scope, limit)
+local function selectCandidates(list, needed, selected, scope, limit, bucketName)
     if not list or needed <= 0 then
         return
     end
@@ -236,7 +305,7 @@ local function selectCandidates(list, needed, selected, scope, limit)
     for _, record in ipairs(list) do
         if not selected[record.id] then
             selected[record.id] = true
-            if queueVictim(record, scope, limit) then
+            if queueVictim(record, scope, limit, bucketName) then
                 planned = planned + 1
                 if planned >= needed then
                     return
@@ -251,20 +320,34 @@ local function getChunk(job, key)
     return job.chunkSet[key]
 end
 
-local function updateWarningScopes(job, reasons)
+local function chunkOwnedBy(chunk, ownerIndex)
+    if not chunk or not chunk.owners then
+        return false
+    end
+    for _, owner in ipairs(chunk.owners) do
+        if owner == ownerIndex then
+            return true
+        end
+    end
+    return false
+end
+
+-- 本次掃到的區塊依 reasons 判定去留（沒列進去＝已回到上限內）；沒掃到的區塊——玩家已離開、
+-- 之後可能永遠不會再被掃到——則用閒置年齡回收，避免記錄隨探索範圍無界成長
+local function pruneChunkWarnings(job, reasons, now)
+    local staleMs = warnInterval() * C.WARN_STALE_INTERVALS
     local stale = {}
     for key, record in pairs(warned) do
         local separator = string.find(key, "|", 1, true)
         local keyChunk = separator and string.sub(key, 1, separator - 1) or ""
         if job.chunkSet[keyChunk] then
-            local reason = reasons[key]
-            record.chunk = reason and reason.chunk or false
-            if job.kind == "periodic" then
-                record.area = reason and reason.area or false
-            end
-            if not record.chunk and not record.area then
+            if reasons[key] then
+                record.lastSeen = now
+            else
                 stale[#stale + 1] = key
             end
+        elseif now - (record.lastSeen or record.time) > staleMs then
+            stale[#stale + 1] = key
         end
     end
     for _, key in ipairs(stale) do
@@ -272,65 +355,105 @@ local function updateWarningScopes(job, reasons)
     end
 end
 
+local function bucketLimits(bucketName)
+    if bucketName == "high" then
+        return tonumber(Cleaner.getOption("HighToleranceMaxPerType")) or Cleaner.DEFAULTS.HighToleranceMaxPerType,
+            tonumber(Cleaner.getOption("HighToleranceMaxPerTypeArea")) or Cleaner.DEFAULTS.HighToleranceMaxPerTypeArea
+    end
+    return tonumber(Cleaner.getOption("MaxFloorItemsPerType")) or Cleaner.DEFAULTS.MaxFloorItemsPerType,
+        tonumber(Cleaner.getOption("MaxFloorItemsPerTypeArea")) or Cleaner.DEFAULTS.MaxFloorItemsPerTypeArea
+end
+
 local function finishJob(job, now)
-    local maxChunk = tonumber(Cleaner.getOption("MaxFloorItemsPerType")) or Cleaner.DEFAULTS.MaxFloorItemsPerType
-    local maxArea = tonumber(Cleaner.getOption("MaxFloorItemsPerTypeArea")) or Cleaner.DEFAULTS.MaxFloorItemsPerTypeArea
     local selected = {}
     local reasons = {}
+    local areaReasons = {}
 
-    if maxChunk > 0 then
-        for key, counts in pairs(job.counts) do
-            local chunk = getChunk(job, key)
-            for fullType, count in pairs(counts) do
-                if count > maxChunk then
-                    local warningKey = hotspotKey(key, fullType)
-                    reasons[warningKey] = reasons[warningKey] or {}
-                    reasons[warningKey].chunk = true
-                    if ensureWarning(warningKey, chunk, fullType, now) then
-                        local list = job.candidates[key] and job.candidates[key][fullType]
-                        if list and #list > 0 then
-                            selectCandidates(list, count - maxChunk, selected, "chunk", maxChunk)
-                        else
-                            -- 超標但無可刪候選（全部 isIgnoreRemoveSandbox/favorite/protectlist/非空容器）：記一次診斷 log
-                            local record = warned[warningKey]
-                            if record and not record.loggedProtected then
-                                record.loggedProtected = true
-                                Cleaner.log("items_protected_over", "system", chunk.cx, chunk.cy, chunk.z,
-                                    "fullType=" .. Cleaner.sanitize(fullType) .. " count=" .. count .. " limit=" .. maxChunk)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
+    for _, bucketName in ipairs(BUCKETS) do
+        local bucket = job.buckets[bucketName]
+        local maxChunk, maxArea = bucketLimits(bucketName)
 
-    if job.kind == "periodic" and maxArea > 0 then
-        for fullType, count in pairs(job.regionCount) do
-            if count > maxArea then
-                local regionCandidates = {}
-                for key, chunkCounts in pairs(job.counts) do
-                    if (chunkCounts[fullType] or 0) > 0 then
-                        local chunk = getChunk(job, key)
-                        local warningKey = hotspotKey(key, fullType)
-                        reasons[warningKey] = reasons[warningKey] or {}
-                        reasons[warningKey].area = true
-                        if ensureWarning(warningKey, chunk, fullType, now) then
-                            local list = job.candidates[key] and job.candidates[key][fullType]
-                            if list then
-                                for _, record in ipairs(list) do
-                                    regionCandidates[#regionCandidates + 1] = record
+        if maxChunk > 0 then
+            for key, counts in pairs(bucket.counts) do
+                local chunk = getChunk(job, key)
+                for fullType, count in pairs(counts) do
+                    if count > maxChunk then
+                        local warningKey = hotspotKey(key, bucketName, fullType)
+                        reasons[warningKey] = true
+                        if ensureWarning(warningKey, chunk, fullType, count, maxChunk, now) then
+                            local list = bucket.candidates[key] and bucket.candidates[key][fullType]
+                            if list and #list > 0 then
+                                selectCandidates(list, count - maxChunk, selected, "chunk", maxChunk, bucketName)
+                            else
+                                -- 超標但無可刪候選（全部 isIgnoreRemoveSandbox/favorite/protectlist/非空容器）：記一次診斷 log
+                                local record = warned[warningKey]
+                                if record and not record.loggedProtected then
+                                    record.loggedProtected = true
+                                    Cleaner.log("items_protected_over", "system", chunk.cx, chunk.cy, chunk.z,
+                                        "bucket=" .. bucketName .. " fullType=" .. Cleaner.sanitize(fullType)
+                                            .. " count=" .. count .. " limit=" .. maxChunk)
                                 end
                             end
                         end
                     end
                 end
-                selectCandidates(regionCandidates, count - maxArea, selected, "area", maxArea)
+            end
+        end
+
+        if job.kind == "periodic" and maxArea > 0 then
+            -- 逐玩家判定：每位玩家只跟自己周邊的數量比對，別人在地圖另一頭堆的不算在內
+            for ownerIndex, counts in pairs(bucket.regionCount) do
+                local playerObj = job.players[ownerIndex]
+                if playerObj then
+                    -- 該玩家擁有的區塊清單只建一次（且延後到真的要挑候選時才建）：
+                    -- 否則「每位玩家 × 每種超標物品」都得重掃整份 counts，人多時是一次性尖峰
+                    local ownerKeys = nil
+                    for fullType, count in pairs(counts) do
+                        if count > maxArea then
+                            local warningKey = areaWarnKey(playerObj, bucketName, fullType)
+                            areaReasons[warningKey] = true
+                            if ensureAreaWarning(warningKey, playerObj, fullType, count, maxArea, now) then
+                                if not ownerKeys then
+                                    ownerKeys = {}
+                                    for key in pairs(bucket.counts) do
+                                        if chunkOwnedBy(getChunk(job, key), ownerIndex) then
+                                            ownerKeys[#ownerKeys + 1] = key
+                                        end
+                                    end
+                                end
+                                local regionCandidates = {}
+                                for _, key in ipairs(ownerKeys) do
+                                    local list = bucket.candidates[key] and bucket.candidates[key][fullType]
+                                    if list then
+                                        for _, record in ipairs(list) do
+                                            regionCandidates[#regionCandidates + 1] = record
+                                        end
+                                    end
+                                end
+                                selectCandidates(regionCandidates, count - maxArea, selected, "area", maxArea, bucketName)
+                            end
+                        end
+                    end
+                end
             end
         end
     end
 
-    updateWarningScopes(job, reasons)
+    -- 每輪 periodic 都涵蓋全部線上玩家與兩個桶，因此沒出現在本輪 areaReasons 的記錄
+    -- ＝已回到上限內，或該玩家已離線 → 一律清掉
+    if job.kind == "periodic" then
+        local staleArea = {}
+        for key in pairs(areaWarned) do
+            if not areaReasons[key] then
+                staleArea[#staleArea + 1] = key
+            end
+        end
+        for _, key in ipairs(staleArea) do
+            areaWarned[key] = nil
+        end
+    end
+
+    pruneChunkWarnings(job, reasons, now)
 end
 
 local function consumeScanQueue(now)
@@ -384,9 +507,11 @@ local function findQueuedWorldItem(record)
     return nil, nil, square
 end
 
--- 重數某 chunk 內某 fullType 的現存地板物品數（帶本 tick cache）；供刪除前 recount，避免用過期快照刪到低於閾值
-local function liveChunkCount(cx, cy, z, fullType, cache)
-    local ck = chunkKey(cx, cy, z) .. "|" .. fullType
+-- 重數某 chunk 內某 fullType、**且屬於同一個計數桶**的現存地板物品數（帶本 tick cache）；
+-- 供刪除前 recount，避免用過期快照刪到低於閾值。必須依桶過濾——否則 normal 桶的受害者
+-- 會把世界原生那些一起數進來，recount 永遠過關而刪過頭
+local function liveChunkCount(cx, cy, z, fullType, bucketName, ctx, cache)
+    local ck = chunkKey(cx, cy, z) .. "|" .. bucketName .. "|" .. fullType
     if cache[ck] ~= nil then
         return cache[ck], ck
     end
@@ -402,7 +527,10 @@ local function liveChunkCount(cx, cy, z, fullType, cache)
                     local wo = wos:get(i)
                     local it = wo and wo:getItem()
                     if it and it:getFullType() == fullType then
-                        count = count + 1
+                        local isHigh = Cleaner.isHighTolerance(ctx.highSet, it, fullType, ctx.stampsEnabled)
+                        if isHigh == (bucketName == "high") then
+                            count = count + 1
+                        end
                     end
                 end
             end
@@ -425,7 +553,17 @@ local function compactDeleteQueue()
 end
 
 local function processDeleteQueue()
+    -- 佇列空就直接離開：下面兩個 matcher 每次都要重新解析沙盒字串並轉小寫，
+    -- 而 onTick 每幀都會呼叫本函式——絕大多數幀佇列是空的，等於白做 60 次/秒。
+    -- （排空當下的 log／通知輸出在同一次呼叫的迴圈後就完成，不會被這道 early return 跳過）
+    if deleteHead > #deleteQueue then
+        return
+    end
     local protectSet = Cleaner.getProtectMatcher()
+    local ctx = {
+        highSet = Cleaner.getHighToleranceMatcher(),
+        stampsEnabled = Cleaner.getOption("TouchTraceEnabled") ~= false,
+    }
     local liveCache = {}
     local processed = 0
     while processed < C.ITEMS_PER_TICK and deleteHead <= #deleteQueue do
@@ -437,26 +575,33 @@ local function processDeleteQueue()
         -- chunk-scope 刪除前 recount：玩家可能已自行撿走使該 chunk 回到閾值內，則取消本件（不刪到低於閾值）
         local overThreshold = true
         if record.scope == "chunk" then
-            local live = liveChunkCount(record.cx, record.cy, record.z, record.fullType, liveCache)
+            local live = liveChunkCount(record.cx, record.cy, record.z, record.fullType, record.bucket, ctx, liveCache)
             overThreshold = live > (record.limit or 0)
         end
 
         local item, worldObj, square = nil, nil, nil
         if overThreshold then
             item, worldObj, square = findQueuedWorldItem(record)
+            -- 分桶是掃描當下依當時設定算的；排隊等待期間管理員若改了 TouchTraceEnabled 或
+            -- 高容忍清單，這件物品可能已不屬於當初那個桶 → fail-closed 放掉，下一輪用新設定重判
+            if item and record.bucket
+                and Cleaner.isHighTolerance(ctx.highSet, item, record.fullType, ctx.stampsEnabled)
+                    ~= (record.bucket == "high") then
+                item = nil
+            end
         end
         if item and Cleaner.isSafeFloorCandidate(item, worldObj, protectSet) then
             local dropper = Cleaner.getItemModDataValue(item, Cleaner.KEY_DROPPED) or "unknown"
             if Cleaner.removeFloorItem(item, worldObj, square) then
                 -- 任何成功刪除都遞減對應 chunk cache（不分 victim scope）；否則 area victim 刪同 chunk 後，
                 -- 後續 chunk record 會用到過期數量而多刪一筆（chunk→area→chunk 會 12→9，低於 limit 10）
-                local ck = chunkKey(record.cx, record.cy, record.z) .. "|" .. record.fullType
+                local ck = chunkKey(record.cx, record.cy, record.z) .. "|" .. tostring(record.bucket) .. "|" .. record.fullType
                 if liveCache[ck] then
                     liveCache[ck] = liveCache[ck] - 1
                 end
                 -- 清理爆發跨多 tick（限速 16 件/tick）；log 與通知都累積到佇列排空時一次輸出，
                 -- 避免一次爆發寫出十幾行 removed=16
-                local key = hotspotKey(chunkKey(record.cx, record.cy, record.z), record.fullType)
+                local key = hotspotKey(chunkKey(record.cx, record.cy, record.z), record.bucket, record.fullType)
                 local notify = cleanNotify[key]
                 if not notify then
                     notify = {
@@ -486,7 +631,7 @@ local function processDeleteQueue()
             for dropper, count in pairs(notify.droppers) do
                 dropperDetails[#dropperDetails + 1] = dropper .. ":" .. count
             end
-            table.sort(dropperDetails)
+            Cleaner.sortSafe(dropperDetails, function(a, b) return a < b end)
             Cleaner.log(
                 "auto_clean",
                 "system",
@@ -508,6 +653,7 @@ local function resetDisabledState()
     activeJob = nil
     dirtyChunks = {}
     warned = {}
+    areaWarned = {}
     deleteQueue = {}
     deleteHead = 1
     pendingDeleteIDs = {}
@@ -518,9 +664,7 @@ end
 local function onTick()
     -- LuaManager.java:9268-9273; forageServer.lua:455-471
     local now = getTimestampMs()
-    local maxChunk = tonumber(Cleaner.getOption("MaxFloorItemsPerType")) or 0
-    local maxArea = tonumber(Cleaner.getOption("MaxFloorItemsPerTypeArea")) or 0
-    if maxChunk == 0 and maxArea == 0 then
+    if Cleaner.isFloorCleaningDisabled() then
         resetDisabledState()
         return
     end

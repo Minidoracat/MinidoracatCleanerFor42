@@ -153,7 +153,7 @@ function MinidoracatCleanerPicker:getAnimalEntries()
     end
     local cache = {}
     for group, entry in pairs(groups) do
-        table.sort(entry.names)
+        Cleaner.sortSafe(entry.names, function(a, b) return a < b end)
         local names = table.concat(entry.names, ", ")
         cache[#cache + 1] = {
             value = group,
@@ -161,7 +161,7 @@ function MinidoracatCleanerPicker:getAnimalEntries()
             search = entry.search,
         }
     end
-    table.sort(cache, function(a, b) return a.label < b.label end)
+    Cleaner.sortSafe(cache, function(a, b) return a.label < b.label end)
     return cache
 end
 
@@ -287,7 +287,7 @@ local function firstBreedName(group)
     for name in pairs(groupBreeds) do
         names[#names + 1] = tostring(name)
     end
-    table.sort(names)
+    Cleaner.sortSafe(names, function(a, b) return a < b end)
     return names[1]
 end
 
@@ -310,7 +310,7 @@ local function buildSpawnTypeList()
             end
         end
     end
-    table.sort(list, function(a, b) return a.label < b.label end)
+    Cleaner.sortSafe(list, function(a, b) return a.label < b.label end)
     return list
 end
 

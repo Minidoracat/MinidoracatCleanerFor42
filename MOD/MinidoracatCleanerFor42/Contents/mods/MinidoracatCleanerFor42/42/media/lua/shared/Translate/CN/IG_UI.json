@@ -21,5 +21,6 @@
   "IGUI_MinidoracatCleaner_WarnAnimalsZone": "圈养动物（圈地／鸡舍）超过圈养上限。若下次扫描仍超过上限，将清理超额部分。",
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "“清理系统”已清理超量圈养动物：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "（附近剩余 %1 只）",
-  "IGUI_MinidoracatCleaner_ConfirmContains": "注意：选中的容器内还装着 %1 件物品，会一并销毁。"
+  "IGUI_MinidoracatCleaner_ConfirmContains": "注意：选中的容器内还装着 %1 件物品，会一并销毁。",
+  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）"
 }

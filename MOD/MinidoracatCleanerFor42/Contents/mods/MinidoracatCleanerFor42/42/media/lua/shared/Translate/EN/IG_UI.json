@@ -21,5 +21,6 @@
   "IGUI_MinidoracatCleaner_WarnAnimalsZone": "Ranched animals (zone/hutch) exceed the ranch limit. Excess will be removed if still over at the next scan.",
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "[Cleaner] Removed excess ranched animals: %1 x%2.",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "(%1 remaining nearby)",
-  "IGUI_MinidoracatCleaner_ConfirmContains": "Warning: the selection includes containers holding %1 item(s) — those will be destroyed too."
+  "IGUI_MinidoracatCleaner_ConfirmContains": "Warning: the selection includes containers holding %1 item(s) — those will be destroyed too.",
+  "IGUI_MinidoracatCleaner_WarnDetail": "(%1: %2 / limit %3)"
 }

@@ -42,6 +42,37 @@ option MinidoracatCleanerFor42.MaxFloorItemsPerTypeArea
     translation = MinidoracatCleanerFor42_MaxFloorItemsPerTypeArea,
 }
 
+/* 高容忍桶：無丟棄者標記的物品（世界原生／舊物）與高容忍清單內的物品共用這組上限。
+   string default 不能含逗號（ScriptParser.java:32-38 拿逗號當欄位分隔符），故清單預設留空 */
+
+option MinidoracatCleanerFor42.HighToleranceMaxPerType
+{
+    type = integer,
+    min = 0,
+    max = 10000,
+    default = 300,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_HighToleranceMaxPerType,
+}
+
+option MinidoracatCleanerFor42.HighToleranceMaxPerTypeArea
+{
+    type = integer,
+    min = 0,
+    max = 50000,
+    default = 2000,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea,
+}
+
+option MinidoracatCleanerFor42.HighToleranceList
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_HighToleranceList,
+}
+
 option MinidoracatCleanerFor42.ScanRadius
 {
     type = integer,
