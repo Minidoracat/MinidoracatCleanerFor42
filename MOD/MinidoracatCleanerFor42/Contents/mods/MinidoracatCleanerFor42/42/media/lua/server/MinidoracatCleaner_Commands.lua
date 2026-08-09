@@ -86,12 +86,12 @@ local function deleteItems(playerObj, args)
     -- 刪除封包（GameServer.sendRemoveItemFromContainer:2445-2461）只更新客戶端的容器**資料**，
     -- 不會叫物品欄面板重繪；ISInventoryPane 有自己的顯示快取，要等事件才重建。結果是玩家看著
     -- 已刪除的「幽靈物品」還留在貨架上，得丟一件東西進去再拿出來，用一次真實互動逼面板重建。
+    -- 廣播給附近玩家而非只給操作者：兩人同時開著同一個貨架時，只刷新操作者會讓另一人
+    -- 繼續盯著幽靈物品。以操作者位置為錨點即可涵蓋所有可能開著該容器的人（刪除範圍只有 1 格）。
     -- 走本 MOD 自己的通道而不是原版的 ui/DirtyUI：ServerCommands.OnServerCommand（:201-209）
     -- 對每一則認得的指令都 print 一行到 console.txt，而那正是我們查 MOD 錯誤的地方。
-    -- client 端收到後呼叫 ISInventoryPage.dirtyUI()（ISInventoryPage.lua:1330，
-    -- 同時刷新 playerInventory 與 lootInventory）。
     if removed > 0 then
-        sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, "refreshUI", {})
+        Cleaner.refreshNearbyUI(playerObj:getX(), playerObj:getY(), playerObj:getZ())
     end
 end
 

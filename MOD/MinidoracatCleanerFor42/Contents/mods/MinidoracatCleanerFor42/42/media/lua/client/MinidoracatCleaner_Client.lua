@@ -48,6 +48,15 @@ end
 -- 但聊天室那條紅字本來就是不會被蓋掉、可回頭翻閱的可靠通道，頭上長掛只是干擾視線。
 local HALO_FRAMES = 240
 
+-- 伺服器端刪除只會同步容器**資料**，物品欄面板有自己的顯示快取、不會自動重建，
+-- 於是架上還掛著已消失的「幽靈物品」——玩家得丟一件東西進去再拿出來，用一次真實互動
+-- 逼面板重建。dirtyUI 會一併刷新 playerInventory 與 lootInventory（ISInventoryPage.lua:1330）
+function Cleaner.refreshUI()
+    if ISInventoryPage and ISInventoryPage.dirtyUI then
+        ISInventoryPage.dirtyUI()
+    end
+end
+
 function Cleaner.showWarning(playerObj, payload)
     if not playerObj then
         return
@@ -102,6 +111,11 @@ function Cleaner.showCleaned(playerObj, payload)
     end
     addChatLine(text)
     playerObj:setHaloNote(text, 120, 255, 120, HALO_FRAMES)
+    -- 地板物品也顯示在戰利品面板裡，自動清理同樣會留下幽靈物品。這則通知本來就會送給
+    -- 附近玩家，順手刷新即可，不必為此多送一則封包。動物不在面板裡，故只對物品做
+    if payload.kind ~= "animals" then
+        Cleaner.refreshUI()
+    end
 end
 
 local function onServerCommand(module, command, args)
@@ -113,10 +127,7 @@ local function onServerCommand(module, command, args)
     elseif command == "cleaned" then
         Cleaner.showCleaned(getPlayer(), args)
     elseif command == "refreshUI" then
-        -- 伺服器端刪除容器物品後，客戶端的容器資料會被封包更新，但物品欄面板有自己的顯示
-        -- 快取、不會自動重建 → 玩家看到已刪除的「幽靈物品」還留在架上，得丟一件東西進去
-        -- 再拿出來才會刷新。dirtyUI 會一併刷新 playerInventory 與 lootInventory
-        ISInventoryPage.dirtyUI()
+        Cleaner.refreshUI()
     end
 end
 

@@ -37,6 +37,10 @@ Cleaner.CONSTANTS = {
     ZONE_BUFFER = 2,
     MANUAL_DELETE_LIMIT = 100,
     WARNING_RADIUS = 30,
+    -- 刷新物品欄面板的廣播半徑。容器互動需要貼身（刪除範圍本身只有 1 格，站在容器另一側
+    -- 的人再隔 2 格），8 格已有充裕餘裕；取小是因為 dirtyUI 會刷新對方**所有**開啟中的面板，
+    -- 不該去打擾遠處正在整理自己背包的玩家
+    UI_REFRESH_RADIUS = 8,
     CHUNK_SIZE = 8,
     -- 警告記錄的閒置回收門檻（幾個掃描間隔沒再被掃到就丟棄）
     WARN_STALE_INTERVALS = 20,
@@ -415,9 +419,10 @@ function Cleaner.getActivePlayers()
     return result
 end
 
-local function notifyNearby(command, payload, clientHandler)
+local function notifyNearby(command, payload, clientHandler, radius)
+    radius = radius or Cleaner.CONSTANTS.WARNING_RADIUS
     for _, playerObj in ipairs(Cleaner.getActivePlayers()) do
-        if Cleaner.chebyshevDistance(playerObj:getX(), playerObj:getY(), payload.x, payload.y) <= Cleaner.CONSTANTS.WARNING_RADIUS then
+        if Cleaner.chebyshevDistance(playerObj:getX(), playerObj:getY(), payload.x, payload.y) <= radius then
             if isServer() then
                 sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, command, payload)
             elseif clientHandler then
@@ -455,6 +460,12 @@ function Cleaner.warnPlayerOnly(playerObj, kind, detail, count, limit, scope)
     notifyPlayer(playerObj, "warn",
         { kind = kind, detail = detail, count = count, limit = limit, scope = scope },
         Cleaner.showWarning)
+end
+
+-- 通知「可能正開著同一個容器」的玩家刷新物品欄面板。判準是「誰開著」而不是「誰按了刪除」——
+-- 兩人同時開著同一個貨架時，只刷新操作者會讓另一人繼續盯著幽靈物品
+function Cleaner.refreshNearbyUI(x, y, z)
+    notifyNearby("refreshUI", { x = x, y = y, z = z }, Cleaner.refreshUI, Cleaner.CONSTANTS.UI_REFRESH_RADIUS)
 end
 
 function Cleaner.notifyCleanedPlayerOnly(playerObj, kind, detail, count, scope, remaining)
