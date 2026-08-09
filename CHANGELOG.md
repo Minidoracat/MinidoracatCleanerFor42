@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [42.20.2-0.2.5] - 2026-08-10
+
+### 修正
+
+- **動物清理自 0.2.2 起完全失效**：0.2.2 加入動物名稱索引快取時，用了 `next(index)` 判斷空表——但 Kahlua **沒有** `next` 這個全域函式（BaseLib 未註冊；`pairs`/`ipairs` 由 TableLib 另行提供所以可用）。每輪動物掃描都在建索引時拋出「Object tried to call nil」而整輪中斷，正式服 server-console 累積 91 筆錯誤、動物相關事件歸零。改用 `pairs` 迴圈判空。手動刪除與地板物品清理不受影響。
+
+> 技術要點：這個錯誤穿過了全部三道關卡——`luac -p` 只驗語法（`next(t)` 完全合法）、煙霧測試跑在標準 Lua 上（那裡 `next` 存在，24 項全過）、跨模型 code review 也視之為慣用寫法。唯一有效的防線是**原始碼靜態掃描**：`smoke_scanner.lua` 新增情境五，掃描全部九個 MOD Lua 檔中對 `next`／`assert`／`xpcall` 的全域呼叫（三者皆不存在於 Kahlua；方法式呼叫如 `iter:next()` 不受影響），並已實測植入 `next({})` 會被精準攔下。全檔斷言增至 25 項。
+
 ## [42.20.2-0.2.4] - 2026-08-09
 
 ### 變更

@@ -380,6 +380,60 @@ check(indexSize(bogus) == 0, "只點名不存在的 id 時，完全不配置任�
 local oneReal = MinidoracatCleaner.buildAccessibleIndex(player, 1, { shelfItem:getID(), 999999999 })
 check(indexSize(oneReal) == 1, "點名 1 實 1 虛時只配置 1 筆 record，不隨範圍內件數放大")
 
+-- ===== 情境五：Kahlua 沒有的標準 Lua 全域（靜態掃描）=====
+-- 這個 harness 跑在標準 Lua 上，next/assert/xpcall 全都存在，所以「執行測試」在架構上
+-- 永遠抓不到誤用——0.2.2 的 next(index) 就是這樣溜到正式服，讓動物清理每輪拋
+-- 「Object tried to call nil」而整輪中斷（正式服 server-console 累積 91 次）。
+-- Kahlua 的 BaseLib 只註冊 collectgarbage/error/getfenv/getmetatable/pcall/print/
+-- rawequal/rawget/rawset/select/setfenv/setmetatable/tonumber/tostring/type/unpack；
+-- pairs/ipairs 另由 TableLib 註冊，可用。以下三個在整個 kahlua 樹都找不到。
+print()
+print("情境五：Kahlua 缺少的標準 Lua 全域（原始碼掃描）")
+
+local SOURCES = {
+    "shared/MinidoracatCleaner_Core.lua",
+    "shared/MinidoracatCleaner_DropStamp.lua",
+    "server/MinidoracatCleaner_WorldScanner.lua",
+    "server/MinidoracatCleaner_AnimalScanner.lua",
+    "server/MinidoracatCleaner_Commands.lua",
+    "client/MinidoracatCleaner_Client.lua",
+    "client/MinidoracatCleaner_ContextMenu.lua",
+    "client/MinidoracatCleaner_Tooltip.lua",
+    "client/MinidoracatCleaner_Picker.lua",
+}
+local FORBIDDEN = { "next", "assert", "xpcall" }
+
+local hits = {}
+for _, rel in ipairs(SOURCES) do
+    local fh = io.open(MEDIA .. "/" .. rel)
+    if fh then
+        local lineNo = 0
+        for line in fh:lines() do
+            lineNo = lineNo + 1
+            local code = line:match("^(.-)%-%-") or line   -- 去掉行註解
+            for _, name in ipairs(FORBIDDEN) do
+                local pos = 1
+                while true do
+                    local s, e = code:find(name .. "%s*%(", pos)
+                    if not s then break end
+                    -- 前一字元若是識別字元／冒號／點，代表是方法或欄位（如 iter:next()），不算
+                    local prev = s > 1 and code:sub(s - 1, s - 1) or " "
+                    if not prev:match("[%w_:%.]") then
+                        hits[#hits + 1] = rel .. ":" .. lineNo .. " 用了 " .. name .. "()"
+                    end
+                    pos = e + 1
+                end
+            end
+        end
+        fh:close()
+    else
+        hits[#hits + 1] = "讀不到 " .. rel
+    end
+end
+
+for _, h in ipairs(hits) do print("        " .. h) end
+check(#hits == 0, "沒有使用 Kahlua 不存在的全域（next／assert／xpcall）")
+
 print()
 if failures > 0 then
     print(failures .. " 項失敗")

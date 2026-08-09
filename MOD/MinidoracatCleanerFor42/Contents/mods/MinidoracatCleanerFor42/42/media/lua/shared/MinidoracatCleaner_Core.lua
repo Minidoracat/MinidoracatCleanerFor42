@@ -178,8 +178,16 @@ local function buildAnimalNameIndex()
             end
         end
     end
-    -- AnimalDefinitions 若還沒載入就會得到空索引，此時不要快取，下次再試
-    if next(index) ~= nil then
+    -- AnimalDefinitions 若還沒載入就會得到空索引，此時不要快取，下次再試。
+    -- 不可用 next(index)：Kahlua 的 BaseLib 沒有註冊 next（只有 collectgarbage/error/
+    -- getfenv/getmetatable/pcall/print/rawequal/rawget/rawset/select/setfenv/setmetatable/
+    -- tonumber/tostring/type/unpack），呼叫會拋「Object tried to call nil」並中斷整輪掃描。
+    local hasAny = false
+    for _ in pairs(index) do
+        hasAny = true
+        break
+    end
+    if hasAny then
         animalNameIndex = index
     end
     return index
