@@ -7,6 +7,8 @@
 情境二：批次手動刪除的索引建立與安全邊界（範圍外、被牆阻隔、最愛物品都不得被刪）
 情境三：提早退出（只刪背包內物品時不得掃描世界，但也不得因此略過把關）
 情境四：拒絕路徑（保險屋拒絕、無所在格）與記憶體配置上限
+情境五：週期掃描修復被刪空的容器（三種正常狀態當對照組，確認修復不外溢）
+情境六：Kahlua 缺少的標準 Lua 全域（原始碼靜態掃描）
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -146,15 +148,44 @@ local function makeItem(fullType, dropper)
     }
 end
 
--- 家具容器：getParent 非 nil 才通得過 isSyncableContainer 的 MP 檢查
+-- 哪張 overlay 屬於哪些底圖（ContainerOverlays.java:87-113 建的反查表）。
+-- 沒登記在這裡的 overlay＝來路不明，修復必須放過它
+local overlayOwners = {
+    ["shelf_full"] = { "shelf_base" },
+}
+
+-- 家具容器：getParent 非 nil 才通得過 isSyncableContainer 的 MP 檢查。
+-- getParent 回傳的是貨架本體（IsoObject），它身上掛著滿／空的 overlay 貼圖
 local function makeContainer(owner)
     local c
+    local parent = owner == "furniture" and {
+        _sprite = "shelf_base",
+        _overlay = "shelf_full",
+        _inOverlayMap = true,     -- 底圖登記在容器 overlay 表裡＝真的是貨架
+        _overlayUpdates = 0,
+        _hotSaves = 0,
+        getSprite = function(self) return { getName = function() return self._sprite end } end,
+        getOverlaySprite = function(self)
+            if not self._overlay then return nil end
+            local name = self._overlay
+            return { getName = function() return name end }
+        end,
+        getContainer = function(self) return self._container end,
+        getContainerCount = function() return 1 end,
+        getContainerByIndex = function(self) return self._container end,
+        flagForHotSave = function(self) self._hotSaves = self._hotSaves + 1 end,
+    } or nil
     c = {
         _items = {},
+        _looted = false,
+        _parent = parent,
         getItems = function(self) return javaList(self._items) end,
+        isEmpty = function(self) return #self._items == 0 end,
         getCharacter = function() return owner == "player" and true or nil end,
-        getParent = function() return owner == "furniture" and true or nil end,
+        getParent = function(self) return self._parent end,
         getWorldItem = function() return nil end,
+        setHasBeenLooted = function(self, value) self._looted = value end,
+        isHasBeenLooted = function(self) return self._looted end,
         DoRemoveItem = function(self, item)
             for i, it in ipairs(self._items) do
                 if it == item then table.remove(self._items, i) break end
@@ -162,7 +193,36 @@ local function makeContainer(owner)
         end,
         add = function(self, item) self._items[#self._items + 1] = item; item._container = c; return item end,
     }
+    if parent then
+        -- 反向連結：讓 ItemPicker.updateOverlaySprite 能照 ContainerOverlays.java:147 的規則
+        -- （容器空了就把 overlay 清成 nil）重算
+        parent._container = c
+    end
     return c
+end
+
+-- ContainerOverlays.java:139-178 的行為骨架：底圖沒登記在容器 overlay 表裡就把 overlay
+-- 清成 nil（這正是誤判會抹掉工作站進度貼圖的原因），登記了則依件數重算
+ItemPicker = {
+    updateOverlaySprite = function(obj)
+        if not obj then return end
+        obj._overlayUpdates = (obj._overlayUpdates or 0) + 1
+        if not obj._inOverlayMap or (obj._container and #obj._container._items == 0) then
+            obj._overlay = nil
+        end
+    end,
+}
+
+-- ContainerOverlays.java:131-133 與 :135-137：底圖是否登記在容器 overlay 表裡，
+-- 以及某張 overlay 反查得到哪些底圖（用來確認 overlay 真的出自容器系統）
+function getContainerOverlays()
+    return {
+        hasOverlays = function(_, obj) return obj._inOverlayMap == true end,
+        getUnderlyingSpriteNames = function(_, overlayName)
+            local owner = overlayOwners[overlayName]
+            return owner and javaList(owner) or nil
+        end,
+    }
 end
 
 local function putOnFloor(x, y, z, item)
@@ -177,12 +237,11 @@ local function putOnFloor(x, y, z, item)
     return item
 end
 
+-- 放進去的是家具本體（IsoObject），容器掛在它身上——`square:getObjects()` 拿到的是它，
+-- 容器修復與可及性索引都從這個物件出發，與真實引擎一致
 local function putFurniture(x, y, z, container)
     local square = getOrMakeSquare(x, y, z)
-    square._containers[#square._containers + 1] = {
-        getContainerCount = function() return 1 end,
-        getContainerByIndex = function() return container end,
-    }
+    square._containers[#square._containers + 1] = container:getParent()
 end
 
 local playerInv = makeContainer("player")
@@ -312,6 +371,13 @@ check(countFloor("Base.Plank") == 0, "地板物品已刪除")
 check(inContainer(farShelf, farItem), "範圍外的物品未被刪除（可及性把關）")
 check(inContainer(blockedShelf, blockedItem), "被阻隔格上的物品未被刪除（可及性把關）")
 
+-- 刪空貨架必須同時解除兩道「卡住」：重生旗標與外觀貼圖。少任一項，玩家就得放一件
+-- 東西進去再拿出來（＝走一次原版搬運）才會恢復正常
+check(shelf:isHasBeenLooted(), "刪空的容器已標記 hasBeenLooted（物資重生不被卡住）")
+check(shelf:getParent():getOverlaySprite() == nil, "刪空的貨架 overlay 貼圖已清除（外觀不再顯示滿架）")
+check(farShelf:getParent():getOverlaySprite() ~= nil, "沒被刪到的貨架 overlay 貼圖保持不變")
+check(not farShelf:isHasBeenLooted(), "沒被刪到的容器不會被誤標 hasBeenLooted")
+
 local manual = 0
 for _, line in ipairs(logLines) do
     if line:find("manual_delete", 1, true) then manual = manual + 1 end
@@ -380,7 +446,77 @@ check(indexSize(bogus) == 0, "只點名不存在的 id 時，完全不配置任�
 local oneReal = MinidoracatCleaner.buildAccessibleIndex(player, 1, { shelfItem:getID(), 999999999 })
 check(indexSize(oneReal) == 1, "點名 1 實 1 虛時只配置 1 筆 record，不隨範圍內件數放大")
 
--- ===== 情境五：Kahlua 沒有的標準 Lua 全域（靜態掃描）=====
+-- ===== 情境五：週期掃描順手修復被刪空的容器 =====
+-- 指紋＝空 ＋ hasBeenLooted 為 false ＋ 卻還掛著 overlay。三種**不該**被碰的狀態各放一個
+-- 當對照組，確認修復不會外溢到原版本來就正常的容器
+print()
+print("情境五：週期掃描修復被刪空的容器")
+
+-- 放**兩個**壞掉的：只有一個時，「只寫一行 log」無法區分「逐容器輸出」與「整趟聚合」
+local damaged = makeContainer("furniture")            -- 預設就是壞掉的指紋
+putFurniture(102, 102, 0, damaged)
+local damaged2 = makeContainer("furniture")
+putFurniture(102, 103, 0, damaged2)
+
+local natural = makeContainer("furniture")            -- 天生骰空：從來沒被賦予 overlay
+natural:getParent()._overlay = nil
+putFurniture(103, 102, 0, natural)
+
+local lootedClean = makeContainer("furniture")        -- 玩家正常搬空：旗標已設、貼圖已清
+lootedClean:getParent()._overlay = nil
+lootedClean:setHasBeenLooted(true)
+putFurniture(104, 102, 0, lootedClean)
+
+local stocked = makeContainer("furniture")            -- 架上真的有貨：不得動它
+stocked:add(makeItem("Base.Apple"))
+putFurniture(105, 102, 0, stocked)
+
+-- B42 實體工作站：也有空容器、也掛著 overlay，但那是製作進度貼圖（走 SpriteOverlayConfig，
+-- 底圖不在容器 overlay 表裡）。誤判的話會同時「憑空開始重生物資」與「抹掉進度貼圖」
+local craftStation = makeContainer("furniture")
+craftStation:getParent()._overlay = "leather_drying_50"
+craftStation:getParent()._inOverlayMap = false
+putFurniture(106, 102, 0, craftStation)
+
+-- 第三方 MOD 在**真正的貨架底圖**上掛了自己的 overlay：底圖檢查會過，但反查表裡沒有
+-- 這張 overlay → 來路不明，必須放過（否則等於砸掉別家 MOD 的畫面）
+local moddedShelf = makeContainer("furniture")
+moddedShelf:getParent()._overlay = "thirdparty_decor_01"
+putFurniture(107, 102, 0, moddedShelf)
+
+nowMs = nowMs + 61000
+runTicks(600)
+
+check(damaged:isHasBeenLooted() and damaged2:isHasBeenLooted(), "兩個壞掉的容器都補上 hasBeenLooted（重生解鎖）")
+check(damaged:getParent():getOverlaySprite() == nil, "壞掉的貨架 overlay 已清除")
+check(damaged:getParent()._hotSaves > 0, "修復後有 flagForHotSave（重啟不會打回原形）")
+check(not natural:isHasBeenLooted(), "天生骰空的容器未被誤標（沒有無中生有的重生）")
+check(not stocked:isHasBeenLooted(), "架上有貨的容器未被誤標")
+check(stocked:getParent():getOverlaySprite() ~= nil, "架上有貨的容器 overlay 保持不變")
+check(lootedClean:getParent()._hotSaves == 0, "已經正常的容器完全沒被寫入（修復不外溢）")
+check(not craftStation:isHasBeenLooted(), "實體工作站未被誤標（不會憑空開始重生物資）")
+check(craftStation:getParent():getOverlaySprite() ~= nil, "實體工作站的製作進度貼圖沒被抹掉")
+check(not moddedShelf:isHasBeenLooted(), "第三方 overlay 的貨架未被誤標（來路不明就放過）")
+check(moddedShelf:getParent():getOverlaySprite() ~= nil, "第三方 MOD 掛的 overlay 沒被抹掉")
+
+local repairLogs = {}
+for _, line in ipairs(logLines) do
+    if line:find("container_repair", 1, true) then repairLogs[#repairLogs + 1] = line end
+end
+check(#repairLogs == 1, "整趟掃描只寫一行 container_repair 記錄（聚合寫入）")
+check(repairLogs[1] and repairLogs[1]:find("repaired=2", 1, true) ~= nil,
+    "那一行涵蓋兩個容器（repaired=2，證明是聚合而非逐容器輸出）")
+
+-- 第二輪：世界已修完，指紋消失，不該再寫任何 container_repair
+nowMs = nowMs + 61000
+runTicks(600)
+local repairLogsAfter = 0
+for _, line in ipairs(logLines) do
+    if line:find("container_repair", 1, true) then repairLogsAfter = repairLogsAfter + 1 end
+end
+check(repairLogsAfter == 1, "第二輪掃描零新增（修完即收斂，不會重複處理）")
+
+-- ===== 情境六：Kahlua 沒有的標準 Lua 全域（靜態掃描）=====
 -- 這個 harness 跑在標準 Lua 上，next/assert/xpcall 全都存在，所以「執行測試」在架構上
 -- 永遠抓不到誤用——0.2.2 的 next(index) 就是這樣溜到正式服，讓動物清理每輪拋
 -- 「Object tried to call nil」而整輪中斷（正式服 server-console 累積 91 次）。
@@ -388,7 +524,7 @@ check(indexSize(oneReal) == 1, "點名 1 實 1 虛時只配置 1 筆 record，�
 -- rawequal/rawget/rawset/select/setfenv/setmetatable/tonumber/tostring/type/unpack；
 -- pairs/ipairs 另由 TableLib 註冊，可用。以下三個在整個 kahlua 樹都找不到。
 print()
-print("情境五：Kahlua 缺少的標準 Lua 全域（原始碼掃描）")
+print("情境六：Kahlua 缺少的標準 Lua 全域（原始碼掃描）")
 
 local SOURCES = {
     "shared/MinidoracatCleaner_Core.lua",

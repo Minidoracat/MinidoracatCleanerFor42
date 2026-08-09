@@ -743,5 +743,24 @@ function Cleaner.removeContainerItem(item, container)
     if isServer() then
         sendRemoveItemFromContainer(container, item)
     end
+
+    -- DoRemoveItem 只動 items 清單，原版每條「把東西拿出容器」的路徑都另外補這兩件事：
+
+    -- ① hasBeenLooted：物資重生的條件是 explored **且** hasBeenLooted（LootRespawn.java:138），
+    -- 而這面旗只由玩家搬運（ISInventoryTransferAction.lua:656）與客戶端刪除封包
+    -- （RemoveInventoryItemFromContainerPacket.java:115）設起。少了它，被本 MOD 刪空的貨架
+    -- 永遠等不到重生——玩家得放一件進去再拿出來，用一次真實搬運才解鎖。
+    container:setHasBeenLooted(true)
+
+    -- ② overlay sprite：貨架「滿的／空的」外觀是 IsoObject 的 overlay 貼圖，只有
+    -- ItemPicker.updateOverlaySprite 會依容器件數重算（ContainerOverlays.java:139-178）。
+    -- 不補這一刀會**永久固化**成「架上滿滿、打開全空」：chunk 重載時空容器被跳過不重算
+    -- （LoadGridsquarePerformanceWorkaround.java:73-75），且 overlay 名稱會寫進存檔
+    -- （IsoObject.java:1489-1496）。條件與原版一致（只在本來就有 overlay 時重算），
+    -- server 端呼叫會自動廣播給附近客戶端（IsoObject.java:4916-4919），無須自建封包。
+    local parent = container:getParent()
+    if parent and parent:getOverlaySprite() then
+        ItemPicker.updateOverlaySprite(parent)
+    end
     return true
 end

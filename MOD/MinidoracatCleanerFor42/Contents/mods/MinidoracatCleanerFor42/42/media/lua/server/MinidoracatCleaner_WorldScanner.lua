@@ -174,7 +174,77 @@ local function addCandidate(bucket, key, fullType, item, square)
     }
 end
 
+-- 修復被「非原版路徑」刪空的容器——本 MOD 0.2.6 以前的刪除正是這樣。
+-- 指紋＝容器空 ＋ hasBeenLooted 為 false ＋ 物件卻還掛著 overlay 貼圖，三者同時成立。
+-- 這個組合只可能是壞的：
+--   · 原版搬空會設旗標並重算貼圖（ISInventoryTransferAction.lua:656,681-683）→ 旗標是 true
+--   · 天生骰空、沒人動過的容器從來不會被賦予 overlay——補正只在 !isEmpty() 時才跑
+--     （LoadGridsquarePerformanceWorkaround.java:73-75）→ 貼圖是 nil
+-- 修好後指紋隨即消失，同一個容器不會被重複處理，世界修完成本就歸零。
+--
+-- 但「有 overlay」單獨不足以當指紋：B42 的實體工作站（鞣製架、晾曬架…）也用 overlay
+-- 表現製作進度，走的是完全不同的通道（SpriteOverlayConfig.java:83），而且同樣可能帶著
+-- 空容器。誤判的代價是雙重的——既把它標成「已搜刮」讓它憑空開始重生物資，
+-- `updateOverlaySprite` 又會因為底圖不在容器 overlay 表裡而直接抹掉它的製作進度貼圖
+-- （ContainerOverlays.java:147-173 查無 → setOverlaySprite(nil)）。
+-- 所以再問一次 `hasOverlays`：物件的**底圖**必須登記在容器 overlay 表裡（:131-133），
+-- 也就是「這本來就是一個有滿／空外觀的貨架」；工作站與被塗鴉的牆一律排除在外。
+--
+-- 篩選順序＝最便宜又最有鑑別力的先做：getOverlaySprite 是純欄位讀取、對絕大多數物件是
+-- nil，一次就淘汰掉；通過後才做 hasOverlays 的雜湊查表，最後才碰容器。
+-- `hasOverlays` 只保證「底圖是貨架」，不保證「現在掛著的這張 overlay 真的出自容器系統」。
+-- 第三方 MOD 大可在同一個底圖上掛自己的 overlay，硬清掉等於砸掉別人的畫面。
+-- 所以再反查一次：這張 overlay 的名稱登記在哪些底圖底下（ContainerOverlays.java:135-137），
+-- 必須包含本物件的底圖才算數。查不到＝來路不明＝fail-closed 不碰。
+-- 用 size()/get() 逐一比對而不是 ArrayList:contains()：清單只有一兩筆，而 Kahlua 對
+-- Java 方法的暴露有過意外（見 AGENTS.md 踩坑錄），沒必要為省三行冒這個險。
+local function overlayCameFromContainer(overlays, object)
+    local sprite = object:getSprite()
+    local overlaySprite = object:getOverlaySprite()
+    if not sprite or not overlaySprite then
+        return false
+    end
+    local underlying = overlays:getUnderlyingSpriteNames(overlaySprite:getName())
+    if not underlying then
+        return false
+    end
+    local spriteName = sprite:getName()
+    for index = 0, underlying:size() - 1 do
+        if underlying:get(index) == spriteName then
+            return true
+        end
+    end
+    return false
+end
+
+local function repairBrokenContainers(job, square)
+    local objects = square:getObjects()
+    local overlays = getContainerOverlays()
+    for index = 0, objects:size() - 1 do
+        local object = objects:get(index)
+        if object and object:getOverlaySprite() and overlays:hasOverlays(object)
+            and overlayCameFromContainer(overlays, object) then
+            -- overlay 只反映**主**容器的件數（ContainerOverlays.java:146），
+            -- 也就只有主容器的狀態能從貼圖反推，多容器物件的其餘容器不碰
+            local container = object:getContainer()
+            if container and container:isEmpty() and not container:isHasBeenLooted() then
+                container:setHasBeenLooted(true)
+                ItemPicker.updateOverlaySprite(object)
+                -- setHasBeenLooted 與 setOverlaySprite 都不會自己標記存檔（不像 DoRemoveItem
+                -- 內建 flagForHotSave，ItemContainer.java:2090-2092）；少了這行，修好的狀態
+                -- 會在下次重啟被打回原形，等於每次開服都白修一遍
+                object:flagForHotSave()
+                job.repaired = (job.repaired or 0) + 1
+                if not job.repairAt then
+                    job.repairAt = { x = square:getX(), y = square:getY(), z = square:getZ() }
+                end
+            end
+        end
+    end
+end
+
 local function scanSquare(job, chunk, square)
+    repairBrokenContainers(job, square)
     local key = chunkKey(chunk.cx, chunk.cy, chunk.z)
     local worldObjects = square:getWorldObjects()
     for index = 0, worldObjects:size() - 1 do
@@ -454,6 +524,13 @@ local function finishJob(job, now)
     end
 
     pruneChunkWarnings(job, reasons, now)
+
+    -- 修復是逐格發生的，但 log 累到整份工作做完才寫一行（ZLogger 超過 10MB 是原檔截斷
+    -- 非輪替，ZLogger.java:95-101）。世界修完後這行就不再出現，可當成收斂指標
+    if job.repaired and job.repaired > 0 then
+        local at = job.repairAt or { x = 0, y = 0, z = 0 }
+        Cleaner.log("container_repair", "system", at.x, at.y, at.z, "repaired=" .. job.repaired)
+    end
 end
 
 local function consumeScanQueue(now)
