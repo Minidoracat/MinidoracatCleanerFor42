@@ -28,43 +28,25 @@ local function describeDetail(kind, detail)
         if script then
             return script:getDisplayName()
         end
+    elseif kind == "animals" then
+        -- 動物「群組」沒有原版翻譯鍵可用：vanilla 只有分性別年齡的 IGUI_AnimalType_*
+        -- （rat→公老鼠、ratfemale→母老鼠…），對應不到群組這個概念，故用本 MOD 自己的鍵。
+        -- getText 查不到時會原樣回傳 key，就 fallback 成群組原名——別的 MOD 新增的群組
+        -- 因此仍能正常顯示，不會變成空字串
+        local key = "IGUI_MinidoracatCleaner_AnimalGroup_" .. tostring(detail)
+        local translated = getText(key)
+        if translated and translated ~= key then
+            return translated
+        end
     end
     return tostring(detail)
 end
 
--- 持續警告狀態：halo 預設只顯示 128 frame（IsoGameCharacter.java:592）且會被其他 halo（經驗值等）蓋掉，
--- 故每 3 秒重掛一次（setHaloNote 五參數自訂時長，vanilla 用例 ISMoveableSpriteProps.lua:3304），
--- 直到「清理完成」通知到達或確認窗到期
-local activeWarn = nil
-
-local function warningWindowMs(kind)
-    local name = kind == "animals" and "AnimalScanIntervalSeconds" or "ScanIntervalSeconds"
-    local seconds = tonumber(Cleaner.getOption(name)) or 60
-    return (seconds + 5) * 1000
-end
-
-local function refreshWarnHalo()
-    local playerObj = getPlayer()
-    if playerObj and activeWarn then
-        -- 240 frame ≈ 4 秒，配 3 秒重掛間隔形成連續顯示（IsoGameCharacter.java:6958）
-        playerObj:setHaloNote(activeWarn.text, 255, 70, 60, 240)
-    end
-end
-
-local function onTickWarn()
-    if not activeWarn then
-        return
-    end
-    local now = getTimestampMs()
-    if now >= activeWarn.expireAt then
-        activeWarn = nil
-        return
-    end
-    if now >= activeWarn.nextRefreshAt then
-        activeWarn.nextRefreshAt = now + 3000
-        refreshWarnHalo()
-    end
-end
+-- 頭上的 halo 只顯示一次就讓它自然消失（240 frame ≈ 4 秒，setHaloNote 五參數自訂時長，
+-- vanilla 用例 ISMoveableSpriteProps.lua:3304）。原本會每 3 秒重掛一次撐到下一輪掃描，
+-- 因為 halo 預設只有 128 frame（IsoGameCharacter.java:592）且會被經驗值等其他 halo 蓋掉；
+-- 但聊天室那條紅字本來就是不會被蓋掉、可回頭翻閱的可靠通道，頭上長掛只是干擾視線。
+local HALO_FRAMES = 240
 
 function Cleaner.showWarning(playerObj, payload)
     if not playerObj then
@@ -94,13 +76,7 @@ function Cleaner.showWarning(playerObj, payload)
             text = text .. " (" .. detail .. ")"
         end
     end
-    local now = getTimestampMs()
-    activeWarn = {
-        text = text,
-        expireAt = now + warningWindowMs(payload.kind),
-        nextRefreshAt = now + 3000,
-    }
-    refreshWarnHalo()
+    playerObj:setHaloNote(text, 255, 70, 60, HALO_FRAMES)
     addChatLine(text)
     -- vanilla UI 音效用法（ISButton.lua:46）
     getSoundManager():playUISound("UIActivateButton")
@@ -110,8 +86,6 @@ function Cleaner.showCleaned(playerObj, payload)
     if not playerObj or not payload then
         return
     end
-    -- 清理已發生：停止持續警告
-    activeWarn = nil
     local key
     if payload.kind == "animals" then
         key = payload.scope == "zone"
@@ -127,7 +101,7 @@ function Cleaner.showCleaned(playerObj, payload)
         text = text .. " " .. getText("IGUI_MinidoracatCleaner_CleanedRemaining", tostring(payload.remaining))
     end
     addChatLine(text)
-    playerObj:setHaloNote(text, 120, 255, 120, 240)
+    playerObj:setHaloNote(text, 120, 255, 120, HALO_FRAMES)
 end
 
 local function onServerCommand(module, command, args)
@@ -142,4 +116,3 @@ local function onServerCommand(module, command, args)
 end
 
 Events.OnServerCommand.Add(onServerCommand)
-Events.OnTick.Add(onTickWarn)

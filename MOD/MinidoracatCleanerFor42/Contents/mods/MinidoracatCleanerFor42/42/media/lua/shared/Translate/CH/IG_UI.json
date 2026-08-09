@@ -22,5 +22,15 @@
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "「清理系統」已清理超量圈養動物：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "（附近剩餘 %1 隻）",
   "IGUI_MinidoracatCleaner_ConfirmContains": "注意：選取的容器內還裝著 %1 件物品，會一併銷毀。",
-  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）"
+  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rat": "老鼠",
+  "IGUI_MinidoracatCleaner_AnimalGroup_mouse": "家鼠",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rabbit": "兔子",
+  "IGUI_MinidoracatCleaner_AnimalGroup_chicken": "雞",
+  "IGUI_MinidoracatCleaner_AnimalGroup_cow": "牛",
+  "IGUI_MinidoracatCleaner_AnimalGroup_pig": "豬",
+  "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "羊",
+  "IGUI_MinidoracatCleaner_AnimalGroup_deer": "鹿",
+  "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "火雞",
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "浣熊"
 }

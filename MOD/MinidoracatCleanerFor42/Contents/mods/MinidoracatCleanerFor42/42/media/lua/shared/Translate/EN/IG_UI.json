@@ -22,5 +22,15 @@
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "[Cleaner] Removed excess ranched animals: %1 x%2.",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "(%1 remaining nearby)",
   "IGUI_MinidoracatCleaner_ConfirmContains": "Warning: the selection includes containers holding %1 item(s) — those will be destroyed too.",
-  "IGUI_MinidoracatCleaner_WarnDetail": "(%1: %2 / limit %3)"
+  "IGUI_MinidoracatCleaner_WarnDetail": "(%1: %2 / limit %3)",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rat": "Rat",
+  "IGUI_MinidoracatCleaner_AnimalGroup_mouse": "Mouse",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rabbit": "Rabbit",
+  "IGUI_MinidoracatCleaner_AnimalGroup_chicken": "Chicken",
+  "IGUI_MinidoracatCleaner_AnimalGroup_cow": "Cow",
+  "IGUI_MinidoracatCleaner_AnimalGroup_pig": "Pig",
+  "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Sheep",
+  "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Deer",
+  "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Turkey",
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Raccoon"
 }

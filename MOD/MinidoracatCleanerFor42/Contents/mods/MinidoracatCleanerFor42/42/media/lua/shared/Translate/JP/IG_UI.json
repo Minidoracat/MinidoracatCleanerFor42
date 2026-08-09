@@ -22,5 +22,15 @@
   "IGUI_MinidoracatCleaner_CleanedAnimalsZone": "「クリーナー」過剰な飼育動物を整理しました：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedRemaining": "（周辺に残り %1 体）",
   "IGUI_MinidoracatCleaner_ConfirmContains": "注意：選択したコンテナに %1 個のアイテムが入っており、一緒に破棄されます。",
-  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）"
+  "IGUI_MinidoracatCleaner_WarnDetail": "（%1：%2／上限 %3）",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rat": "ネズミ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_mouse": "ハツカネズミ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_rabbit": "ウサギ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_chicken": "ニワトリ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_cow": "ウシ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_pig": "ブタ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "ヒツジ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_deer": "シカ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "シチメンチョウ",
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "アライグマ"
 }

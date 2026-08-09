@@ -22,7 +22,7 @@ Every cleanup is [b]warned first[/b] and only executed if the area is still over
 [*] [b]Instant reaction[/b]: dropped items enter the detection queue immediately — no waiting for the next periodic scan
 [*] [b]Animal population control[/b]: removes the excess when one species gets too dense. [u]Stray[/u] and [u]ranched[/u] animals are counted separately with independent limits, both overridable per species (e.g. "rat=20, chicken=80")
 [*] [b]Ranches are safe[/b]: ranched animals are [u]never cleaned[/u] by default; named, held/leashed and hooked animals are absolutely protected under any configuration. Set a number only if you want a ceiling on your ranch
-[*] [b]Triple warning[/b]: a persistent red warning above your character (it won't blink out of existence) + a chat system message + an alert sound; a green notice with the remaining count follows the cleanup
+[*] [b]Triple warning[/b]: a red warning above your character + a chat system message + an alert sound. The chat line stays in your log so you can scroll back to it; a green notice with the remaining count follows the cleanup
 [*] [b]Dropper tracking[/b]: records who last dropped each item, shown right in the item tooltip — no more guessing who littered
 [*] [b]Cleanup log file[/b]: every warning and cleanup is written to its own log with timestamp, item/species, count, coordinates and the dropper — ready for server admin audits (path below)
 [*] [b]List builder[/b]: an in-game search tool — look up items and animal groups by keyword ([u]localized name or English ID both work[/u]), pick them, copy the exact values and paste them into the sandbox options. No more transcribing item IDs by hand
