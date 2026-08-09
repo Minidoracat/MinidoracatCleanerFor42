@@ -35,6 +35,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 passed, failed, skipped = [], [], []
 
+# 豁免清單（選用）：scripts/verify_ignore.txt，每行一個子字串樣式（# 開頭為註解）。
+# 命中樣式的 finding 會列出但不計 FAIL——用於「已逐一查證屬合理例外」的殘留
+# （例：翻譯包鏡像了來源 MOD 原文的裸 %）。每個樣式旁必須有註解說明查證依據。
+IGNORE_PATTERNS = []
+_ign = os.path.join(os.path.dirname(os.path.abspath(__file__)), "verify_ignore.txt")
+if os.path.isfile(_ign):
+    with open(_ign, encoding="utf-8") as _fh:
+        for _line in _fh:
+            _line = _line.strip()
+            if _line and not _line.startswith("#"):
+                IGNORE_PATTERNS.append(_line)
+
 
 def ok(label):
     passed.append(label)
@@ -42,9 +54,20 @@ def ok(label):
 
 
 def fail(label, details=None):
+    details = details or []
+    kept = [d for d in details if not any(p in d for p in IGNORE_PATTERNS)]
+    waived = [d for d in details if any(p in d for p in IGNORE_PATTERNS)]
+    for d in waived:
+        print(f"  WAIVE {label}: {d}（verify_ignore.txt 豁免）")
+    if not kept:
+        if waived:
+            ok(f"{label}（{len(waived)} 筆豁免）")
+        else:
+            ok(label)
+        return
     failed.append(label)
     print(f"  FAIL  {label}")
-    for d in details or []:
+    for d in kept:
         print(f"        {d}")
 
 
@@ -110,11 +133,40 @@ for m in MEDIA_DIRS:
 fail("BOM / CRLF（42/media 下）", bad) if bad else ok("BOM / CRLF（42/media 下）")
 
 # ---- 3+4. 翻譯鍵集一致 / 裸 % ----
+# 裸 % 的判定分兩種模式：
+#   嚴格（家族自製 MOD，語系含 EN 等四語）：只認引擎 Translator.formatted() 的 %1-%9 與 %%
+#   寬容（翻譯包，語系 ⊆ {CH,CN}）：另接受 printf 指令（%s/%d/%.1f…）——第三方 MOD 常用
+#     string.format(getText(...)) 消費譯文，這時保留 %d 才是對的，逸出反而弄壞
+# 刻意不含 printf 旗標字元（-+空白#0）：含空白旗標會讓「50% done」的「% d」被解析成
+# 合法指令而漏抓——翻譯實務上只會出現簡單的 %s/%d/%.1f，罕見旗標用法交給豁免清單
+PRINTF_RE = re.compile(r"%\d*(?:\.\d+)?[sdifuxXcqgGeE]")
+
+
+def find_bare_pct(value, tolerant):
+    s = str(value)
+    i = 0
+    while i < len(s):
+        if s[i] != "%":
+            i += 1
+            continue
+        if i + 1 < len(s) and s[i + 1] in "123456789%":
+            i += 2          # 消耗合法配對——lookahead 不消耗會把 "40%%" 誤報（踩過）
+            continue
+        if tolerant:
+            mm = PRINTF_RE.match(s, i)
+            if mm:
+                i = mm.end()
+                continue
+        return True
+    return False
+
+
 for m in MEDIA_DIRS:
     troot = os.path.join(m, "lua", "shared", "Translate")
     if not os.path.isdir(troot):
         continue
     langs = sorted(d for d in os.listdir(troot) if os.path.isdir(os.path.join(troot, d)))
+    tolerant = set(langs) <= {"CH", "CN"}   # 翻譯包偵測
     names = sorted({n for l in langs for n in os.listdir(os.path.join(troot, l)) if n.endswith(".json")})
     mismatch, badpct, broken = [], [], []
     for n in names:
@@ -132,11 +184,8 @@ for m in MEDIA_DIRS:
                 continue
             keysets[l] = set(data)
             for k, v in data.items():
-                # 只允許 %1-%9 與 %%；其餘裸 % 會讓 formatted() 崩潰
-                for i, ch in enumerate(str(v)):
-                    if ch == "%" and (i + 1 >= len(str(v)) or str(v)[i + 1] not in "123456789%"):
-                        badpct.append(f"{l}/{n} 的 {k}")
-                        break
+                if find_bare_pct(v, tolerant):
+                    badpct.append(f"{l}/{n} 的 {k}")
         if len(keysets) > 1:
             base = next(iter(keysets.values()))
             for l, ks in keysets.items():
@@ -147,7 +196,8 @@ for m in MEDIA_DIRS:
     else:
         ok("翻譯 JSON 可解析")
     fail("翻譯鍵集一致", mismatch) if mismatch else ok(f"翻譯鍵集一致（{'/'.join(langs)}）")
-    fail("翻譯值無裸 %", sorted(set(badpct))) if badpct else ok("翻譯值無裸 %（僅 %1-%9 與 %%）")
+    pct_label = "翻譯值無裸 %（翻譯包模式：另接受 printf 指令）" if tolerant else "翻譯值無裸 %（僅 %1-%9 與 %%）"
+    fail(pct_label, sorted(set(badpct))) if badpct else ok(pct_label)
 
 # ---- 5+6. Kahlua 禁用全域 / table.sort ----
 FORBIDDEN = ("next", "assert", "xpcall")
