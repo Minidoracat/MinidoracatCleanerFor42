@@ -52,14 +52,18 @@ local function deleteItems(playerObj, args)
         return
     end
     local ids = normalizeIDs(args)
-    if not ids then
+    if not ids or #ids == 0 then
         return
     end
+
+    -- 整批共用一份索引：舊版每個 id 都要重掃一次周遭（9 格 × 其中每個容器全走訪），
+    -- 刪 90 件就是同一份掃描跑 90 遍，而且全在伺服器主執行緒同步做完
+    local index = Cleaner.buildAccessibleIndex(playerObj, 1, ids)
 
     local removedByType = {}
     local removed = 0
     for _, id in ipairs(ids) do
-        local found = Cleaner.findAccessibleItem(playerObj, id, 1)
+        local found = index[id]
         local item = found and found.item
         if item and Cleaner.canManuallyDelete(playerObj, item) then
             local deleted = false
@@ -84,7 +88,7 @@ local function onClientCommand(module, command, playerObj, args)
     if module ~= Cleaner.COMMAND_MODULE or not playerObj then
         return
     end
-    -- per-player 節流：偽造封包每筆會觸發 findAccessibleItem 深搜（server 主執行緒），<250ms 直接丟棄
+    -- per-player 節流：偽造封包每次都會觸發一輪周遭掃描（server 主執行緒），<250ms 直接丟棄
     local key = playerObj:getUsername()
     local now = getTimestampMs()
     local last = lastCommandAt[key]

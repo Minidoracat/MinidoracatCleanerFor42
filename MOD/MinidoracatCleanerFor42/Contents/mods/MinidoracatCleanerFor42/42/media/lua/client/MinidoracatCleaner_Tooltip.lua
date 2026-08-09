@@ -4,7 +4,13 @@ require "ISUI/ISToolTipInv"
 local Cleaner = MinidoracatCleaner
 
 local function getTraceLines(item)
-    if not item or not item:hasModData() then
+    -- self.item 不保證是 InventoryItem：ISToolTipInv 不只用於物品欄，原版另有兩處把別的
+    -- 東西塞進同一個 tooltip——ISEnergyBar.lua:90 傳電力資源、ISFluidBar.lua:220 傳流體容器，
+    -- 而 ISToolTipInv.lua:187 是 `o.item = item` 原樣存入、不檢查型別。
+    -- 對這些物件呼叫 hasModData 會得到「Object tried to call nil」而整個 tooltip 繪製中斷。
+    -- 用「方法存在嗎」而非 instanceof 判定：Kahlua 索引不存在的方法回傳 nil 不拋例外
+    -- （這正是上述錯誤的成因），對 Java 物件與 Lua table 都成立。
+    if not item or not item.hasModData or not item:hasModData() then
         return nil
     end
     local modData = item:getModData()

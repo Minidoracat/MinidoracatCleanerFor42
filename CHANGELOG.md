@@ -4,6 +4,24 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [42.20.2-0.2.2] - 2026-08-09
+
+### 修正
+
+- **滑鼠移到電力條／流體條上會噴 Lua 錯誤**：物品提示的擴充假設 `ISToolTipInv.item` 一定是 `InventoryItem`，但原版另有兩處把別的東西塞進同一個 tooltip——`ISEnergyBar.lua:90` 傳電力資源、`ISFluidBar.lua:220` 傳流體容器，而 `ISToolTipInv.lua:187` 是原樣存入不檢查型別。對它們呼叫 `hasModData` 會拋出「Object tried to call nil」並中斷整個 tooltip 繪製。**此問題自 0.1.0 首發即存在**，與 0.2.x 的改動無關；關閉「記錄物品丟棄者」的伺服器不受影響（該情況下不會掛載提示擴充）。
+
+### 效能
+
+- **批次手動刪除不再重複掃描周遭**：舊版對「每一件」要刪的物品都重新搜尋一次周遭——玩家背包（含巢狀袋）加上 9 格範圍內的地板物品、地板袋、家具容器與載具零件容器，而且每個容器要走訪兩次。一次刪 90 件就等於把同一份掃描做 90 遍，且全部擠在伺服器主執行緒的同一次回呼裡（手動刪除沒有像自動清理那樣的每 tick 預算）。改為先建一次「玩家此刻搆得到的所有物品」索引再查表，成本從 O(件數 × 掃描) 降為 O(掃描 ＋ 件數)——刪 90 件的開銷降到與過去刪 1 件相當。
+
+  可及性判定（保險屋 loot 權限、阻隔檢查、載具零件可存取、切比雪夫範圍）語意完全不變，只是從「每格每件各驗一次」變成「每格驗一次」。索引帶著「這次要找哪些 id」建立，且**只替被點名的 id 配置記錄、全部到齊即停止**——因此「右鍵刪自己背包裡的一件東西」在背包階段就收工完全不碰世界，而配置量由手動刪除上限（100 件）封頂，不隨範圍內堆了幾萬件而放大。
+
+- **動物名稱索引不再每輪重建三次**：`getAnimalGroupSet`、`getAnimalLimitOverrides`、`getAnimalZoneLimitOverrides` 三個函式各自重建一份群組名稱索引（走訪全部物種、每個物種呼叫一次 `getText`），因此每輪動物掃描要建三遍——其中兩遍還是為了內容為空的覆寫選項而白做。改為建一次即快取（`AnimalDefinitions` 與端語言在執行期都不會變），並在覆寫選項留空時直接短路。
+
+> 技術要點：配置上限這道防線不是理論潔癖——Kahlua 的每個 Lua table 都是獨立的 `KahluaTableImpl`，底層是 `LinkedHashMap`（`J2SEPlatform.java:35`、`KahluaTableImpl.java:18`），遠比標準 Lua 的輕量 table 昂貴；以 42.20.2 實測 10 萬筆三欄記錄約佔 35 MiB。而 `ItemNumbersLimitPerContainer` 預設 0（無上限，`ServerOptions.java:164`）、`ChickenFeather` 之類的物品重量僅 0.001，單一容器堆到數萬件是做得到的。若不限制配置，光是一個不存在的物品 ID 就能讓伺服器替範圍內每一件物品各配一個 record，且 250ms 節流仍允許每秒約四次。
+>
+> 舊 `findInContainer` 先呼叫 `getItemWithID` 再呼叫 `getItemWithIDRecursiv`，但反編譯可見後者的迴圈裡就檢查了 `item.id == id`（`ItemContainer.java:3065-3092`），完全涵蓋前者——查無此物時第一次呼叫是純浪費。改寫後 `findAccessibleItem`／`findOnSquare`／`containerResult`／`findInContainer` 一併移除。`scripts/smoke_scanner.lua` 擴充為四個情境、共 24 項斷言：雙桶自動清理、批次刪除的可及性邊界（範圍外／被牆阻隔／最愛物品皆不得被刪）、提早退出（只刪背包內物品時不得掃描世界，但也不得因此略過把關）、拒絕路徑與配置上限（保險屋拒絕、無所在格、只點名不存在的 id 時配置零記錄）。
+
 ## [42.20.2-0.2.1] - 2026-08-09
 
 ### 變更

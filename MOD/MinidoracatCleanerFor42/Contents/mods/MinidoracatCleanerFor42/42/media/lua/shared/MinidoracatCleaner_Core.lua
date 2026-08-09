@@ -143,7 +143,16 @@ end
 
 -- 動物群組名稱索引：group key → { 各 type key、各 type 翻譯名（IGUI_AnimalType_<type>，依端語言） }
 -- 供關鍵字解析：「老鼠」→ 公老鼠/小老鼠/母老鼠（CH IG_UI.json:2063-2065）→ rat 群組
+--
+-- 只建一次就快取：AnimalDefinitions 與端語言在執行期都不會變。舊版由三個 getter 各自建一份，
+-- 每輪動物掃描等於重建三遍（走訪全部物種＋每個物種一次 getText），其中兩遍還是為了
+-- 內容為空的覆寫選項而白做
+local animalNameIndex = nil
+
 local function buildAnimalNameIndex()
+    if animalNameIndex then
+        return animalNameIndex
+    end
     local index = {}
     local defs = AnimalDefinitions and AnimalDefinitions.animals
     if type(defs) == "table" then
@@ -164,6 +173,10 @@ local function buildAnimalNameIndex()
                 end
             end
         end
+    end
+    -- AnimalDefinitions 若還沒載入就會得到空索引，此時不要快取，下次再試
+    if next(index) ~= nil then
+        animalNameIndex = index
     end
     return index
 end
@@ -207,6 +220,10 @@ end
 local function parseGroupLimits(optionName)
     local result = {}
     local entries = Cleaner.parseList(Cleaner.getOption(optionName))
+    -- 覆寫選項留空是常態，此時完全不必碰名稱索引
+    if #entries == 0 then
+        return result
+    end
     local index = buildAnimalNameIndex()
     for _, entry in ipairs(entries) do
         local group, value = entry:match("^%s*([^=]+)%s*=%s*(%d+)%s*$")
@@ -467,73 +484,123 @@ function Cleaner.notifyCleaned(kind, detail, count, x, y, z, scope, remaining)
     notifyNearby("cleaned", { kind = kind, detail = detail, count = count, x = x, y = y, z = z, scope = scope, remaining = remaining }, Cleaner.showCleaned)
 end
 
-local function findInContainer(container, id)
+-- 建索引時的共用狀態。ctx.wanted 非 nil 時，一旦要找的 id 全數到齊就可以提早收工——
+-- 這保住了舊版「東西就在玩家背包裡就命中、完全不碰世界」的提早退出特性。
+-- 少了它，右鍵刪背包裡的 1 件東西也會把周遭每個箱子的每一件都建成 entry，
+-- 在囤積型基地是上萬筆小 table 的配置與 GC 壓力。
+-- 只替被點名的 id 配置 record。少了這道過濾，光是一個不存在的 id 就會替範圍內每一件
+-- 可及物品各配一個 record——而 Kahlua 的每個 table 都是獨立的 KahluaTableImpl（底層
+-- LinkedHashMap，J2SEPlatform.java:35、KahluaTableImpl.java:18），不是標準 Lua 那種輕量 table。
+-- 以 42.20.2 實測 10 萬筆三欄 record 約佔 35 MiB；配上 250ms 節流仍允許每秒約四次，
+-- 且全發生在同步的 server callback 上。過濾後配置量由 MANUAL_DELETE_LIMIT 封頂。
+local function indexWanted(ctx, id)
+    return ctx.wanted == nil or ctx.wanted[id] == true
+end
+
+local function indexNote(ctx, id)
+    local wanted = ctx.wanted
+    if wanted and wanted[id] and not ctx.found[id] then
+        ctx.found[id] = true
+        ctx.remaining = ctx.remaining - 1
+    end
+end
+
+local function indexComplete(ctx)
+    return ctx.wanted ~= nil and ctx.remaining <= 0
+end
+
+-- 把一個容器（含巢狀袋）裡的物品登錄進索引。先登錄者優先，因此呼叫順序決定優先權
+local function indexContainer(ctx, container)
     if not container then
-        return nil
+        return
     end
-    local item = container:getItemWithID(id)
-    if not item then
-        -- ItemContainer.java:3065-3088
-        item = container:getItemWithIDRecursiv(id)
+    local items = container:getItems()
+    if not items then
+        return
     end
-    return item
+    for i = 0, items:size() - 1 do
+        local item = items:get(i)
+        if item then
+            local id = item:getID()
+            if indexWanted(ctx, id) and ctx.index[id] == nil then
+                ctx.index[id] = { item = item, kind = "container", container = item:getContainer() or container }
+                indexNote(ctx, id)
+            end
+            -- 先判完成再遞迴：要找的都到齊時連這件容器的內容都不必展開
+            if indexComplete(ctx) then
+                return
+            end
+            -- 巢狀袋。遞迴深度等同 vanilla 的 getItemWithIDRecursiv（ItemContainer.java:3065），
+            -- 容器不可能自我包含，故無循環風險
+            if instanceof(item, "InventoryContainer") then
+                indexContainer(ctx, item:getInventory())
+                if indexComplete(ctx) then
+                    return
+                end
+            end
+        end
+    end
 end
 
-local function containerResult(container, id)
-    local item = findInContainer(container, id)
-    if item then
-        return { item = item, kind = "container", container = item:getContainer() or container }
+local function squareAccessible(square, playerObj, playerSquare)
+    if not isServer() then
+        return true
     end
-    return nil
+    -- 尊重保險屋 loot 權限，避免隔牆刪除他人保險屋容器物品（SafeHouse.java:262-264）
+    if not SafeHouse.isSafehouseAllowLoot(square, playerObj) then
+        return false
+    end
+    -- 阻隔檢查：只允許同格/相鄰格（range 已限 1，isBlockedTo 對相鄰邊界可靠；range 2 的中間牆不一定被檢查）。
+    -- playerSquare 缺失一律 fail closed（IsoGridSquare.java:837，ISGrabItemAction.lua:16）
+    if not playerSquare then
+        return false
+    end
+    if square ~= playerSquare and square:isBlockedTo(playerSquare) then
+        return false
+    end
+    return true
 end
 
-local function findOnSquare(square, playerObj, id, seenVehicles)
-    if isServer() then
-        -- 尊重保險屋 loot 權限，避免隔牆刪除他人保險屋容器物品（SafeHouse.java:262-264）
-        if not SafeHouse.isSafehouseAllowLoot(square, playerObj) then
-            return nil
-        end
-        -- 阻隔檢查：只允許同格/相鄰格（range 已限 1，isBlockedTo 對相鄰邊界可靠；range 2 的中間牆不一定被檢查）。
-        -- playerSquare 缺失一律 fail closed（IsoGridSquare.java:837，ISGrabItemAction.lua:16）
-        local playerSquare = playerObj:getCurrentSquare()
-        if not playerSquare then
-            return nil
-        end
-        if square ~= playerSquare and square:isBlockedTo(playerSquare) then
-            return nil
-        end
-    end
+local function indexSquare(ctx, square, playerObj, seenVehicles)
     local worldObjects = square:getWorldObjects()
-    for index = 0, worldObjects:size() - 1 do
-        local worldObj = worldObjects:get(index)
+    for i = 0, worldObjects:size() - 1 do
+        local worldObj = worldObjects:get(i)
         local item = worldObj and worldObj:getItem()
-        if item and item:getID() == id then
-            return { item = item, kind = "floor", worldObj = worldObj, square = square }
-        end
-        if item and instanceof(item, "InventoryContainer") then
-            local found = containerResult(item:getInventory(), id)
-            if found then
-                return found
+        if item then
+            local id = item:getID()
+            if indexWanted(ctx, id) and ctx.index[id] == nil then
+                ctx.index[id] = { item = item, kind = "floor", worldObj = worldObj, square = square }
+                indexNote(ctx, id)
+            end
+            -- 同上：先判完成再展開地板袋的內容
+            if indexComplete(ctx) then
+                return
+            end
+            if instanceof(item, "InventoryContainer") then
+                indexContainer(ctx, item:getInventory())
+                if indexComplete(ctx) then
+                    return
+                end
             end
         end
     end
 
     local staticObjects = square:getStaticMovingObjects()
-    for index = 0, staticObjects:size() - 1 do
-        local object = staticObjects:get(index)
-        local found = containerResult(object:getContainer(), id)
-        if found then
-            return found
+    for i = 0, staticObjects:size() - 1 do
+        local object = staticObjects:get(i)
+        indexContainer(ctx, object:getContainer())
+        if indexComplete(ctx) then
+            return
         end
     end
 
     local objects = square:getObjects()
-    for index = 0, objects:size() - 1 do
-        local object = objects:get(index)
+    for i = 0, objects:size() - 1 do
+        local object = objects:get(i)
         for containerIndex = 0, object:getContainerCount() - 1 do
-            local found = containerResult(object:getContainerByIndex(containerIndex), id)
-            if found then
-                return found
+            indexContainer(ctx, object:getContainerByIndex(containerIndex))
+            if indexComplete(ctx) then
+                return
             end
         end
     end
@@ -544,46 +611,66 @@ local function findOnSquare(square, playerObj, id, seenVehicles)
         for partIndex = 0, vehicle:getPartCount() - 1 do
             local part = vehicle:getPartByIndex(partIndex)
             if part:getItemContainer() and vehicle:canAccessContainer(partIndex, playerObj) then
-                local found = containerResult(part:getItemContainer(), id)
-                if found then
-                    return found
+                indexContainer(ctx, part:getItemContainer())
+                if indexComplete(ctx) then
+                    return
                 end
             end
         end
     end
-    return nil
 end
 
-function Cleaner.findAccessibleItem(playerObj, id, range)
-    if not playerObj or not id then
-        return nil
+-- 一次掃描建出「玩家此刻搆得到的所有物品」索引：id → { item, kind, container／worldObj+square }。
+-- 舊版是逐一 id 呼叫 findAccessibleItem，每次都重掃 9 格與其中每個容器（且每個容器要走訪兩次，
+-- 因為先呼叫 getItemWithID 再呼叫涵蓋它的 getItemWithIDRecursiv）——批量刪 90 件就等於把同一份
+-- 掃描做 90 遍，全部擠在 OnClientCommand 的同一次同步回呼裡。改成建一次索引後成本是 O(掃描 + N)。
+-- 安全檢查（保險屋／阻隔／載具可存取）改為每格做一次，語意不變。
+-- wantedIds（選填）：只需要這些 id 時，全部到齊即可停止掃描，其餘容器連碰都不碰
+function Cleaner.buildAccessibleIndex(playerObj, range, wantedIds)
+    local ctx = { index = {}, found = {}, wanted = nil, remaining = 0 }
+    if not playerObj then
+        return ctx.index
+    end
+    if wantedIds then
+        local wanted = {}
+        local count = 0
+        for _, id in ipairs(wantedIds) do
+            if not wanted[id] then
+                wanted[id] = true
+                count = count + 1
+            end
+        end
+        ctx.wanted = wanted
+        ctx.remaining = count
     end
 
-    local inventory = playerObj:getInventory()
-    local ownItem = findInContainer(inventory, id)
-    if ownItem then
-        return { item = ownItem, kind = "container", container = ownItem:getContainer() or inventory, own = true }
+    -- 玩家自己的背包最先登錄：優先權與舊版「先查自己身上」一致，也讓「刪自己背包裡的東西」
+    -- 這個最常見的情形在這裡就收工，完全不必碰世界
+    indexContainer(ctx, playerObj:getInventory())
+    if indexComplete(ctx) then
+        return ctx.index
     end
 
     range = range or 1
     local px = math.floor(playerObj:getX())
     local py = math.floor(playerObj:getY())
     local pz = math.floor(playerObj:getZ())
+    local playerSquare = playerObj:getCurrentSquare()
     local seenVehicles = {}
     for y = py - range, py + range do
         for x = px - range, px + range do
             if Cleaner.chebyshevDistance(px, py, x, y) <= range then
                 local square = getCell():getGridSquare(x, y, pz)
-                if square then
-                    local found = findOnSquare(square, playerObj, id, seenVehicles)
-                    if found then
-                        return found
+                if square and squareAccessible(square, playerObj, playerSquare) then
+                    indexSquare(ctx, square, playerObj, seenVehicles)
+                    if indexComplete(ctx) then
+                        return ctx.index
                     end
                 end
             end
         end
     end
-    return nil
+    return ctx.index
 end
 
 function Cleaner.removeFloorItem(item, worldObj, square)
