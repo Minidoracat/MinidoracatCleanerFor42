@@ -112,6 +112,11 @@ local function onServerCommand(module, command, args)
         Cleaner.showWarning(getPlayer(), args)
     elseif command == "cleaned" then
         Cleaner.showCleaned(getPlayer(), args)
+    elseif command == "refreshUI" then
+        -- 伺服器端刪除容器物品後，客戶端的容器資料會被封包更新，但物品欄面板有自己的顯示
+        -- 快取、不會自動重建 → 玩家看到已刪除的「幽靈物品」還留在架上，得丟一件東西進去
+        -- 再拿出來才會刷新。dirtyUI 會一併刷新 playerInventory 與 lootInventory
+        ISInventoryPage.dirtyUI()
     end
 end
 
