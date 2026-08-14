@@ -20,6 +20,16 @@ option MinidoracatCleanerFor42.TouchTraceEnabled
     translation = MinidoracatCleanerFor42_TouchTraceEnabled,
 }
 
+/* 批量生成動物（作弊／測試用）的右鍵選單開關；清單產生器不受此開關影響 */
+
+option MinidoracatCleanerFor42.DebugMenuEnabled
+{
+    type = boolean,
+    default = false,
+    page = MinidoracatCleanerGeneral,
+    translation = MinidoracatCleanerFor42_DebugMenuEnabled,
+}
+
 /* ============ 物品清理 ============ */
 
 option MinidoracatCleanerFor42.MaxFloorItemsPerType

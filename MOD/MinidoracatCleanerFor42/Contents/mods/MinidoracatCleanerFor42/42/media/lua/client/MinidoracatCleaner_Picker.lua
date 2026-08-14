@@ -379,7 +379,12 @@ local function onFillWorldMenu(player, context, worldobjects, test)
             break
         end
     end
-    if square and playerObj then
+    -- 批量生成純屬作弊／測試工具，預設不掛在右鍵選單上（單人玩家嫌它礙眼且破壞體驗）。
+    -- 單人開了 -debug 本來就有原版的生成選單（DebugContextMenu.lua:30 以 isDebugEnabled()
+    -- 放行，:280 掛上 AddAnimal），多這一項零額外曝險故照舊顯示。MP 端原版走的是
+    -- UseDebugContextMenu capability（:26-28），與這裡的判斷無關。
+    if square and playerObj
+        and (isDebugEnabled() or Cleaner.getOption("DebugMenuEnabled") == true) then
         addBatchSpawnMenu(playerObj, context, square)
     end
 end

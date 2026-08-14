@@ -19,6 +19,7 @@ Cleaner.DEFAULTS = {
     ScanIntervalSeconds = 60,
     ProtectList = "",
     TouchTraceEnabled = true,
+    DebugMenuEnabled = false,
     MaxAnimalsPerGroup = 50,
     MaxZoneAnimalsPerGroup = 0,
     AnimalGroupList = "",

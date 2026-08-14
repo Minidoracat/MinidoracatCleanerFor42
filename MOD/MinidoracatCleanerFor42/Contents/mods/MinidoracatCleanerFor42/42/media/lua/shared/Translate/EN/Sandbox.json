@@ -13,6 +13,8 @@
   "Sandbox_MinidoracatCleanerFor42_ProtectList_tooltip": "Items never auto-cleaned. Keywords supported: matches item ID (e.g. Base.Log), English name, or translated name (server language). Separate with commas or semicolons.",
   "Sandbox_MinidoracatCleanerFor42_TouchTraceEnabled": "Track who dropped items",
   "Sandbox_MinidoracatCleanerFor42_TouchTraceEnabled_tooltip": "Record the last player who dropped each item and show it in the item tooltip; the cleanup log also reports the dropper. Turn off to skip tracking entirely.",
+  "Sandbox_MinidoracatCleanerFor42_DebugMenuEnabled": "Show animal spawn debug menu",
+  "Sandbox_MinidoracatCleanerFor42_DebugMenuEnabled_tooltip": "Adds a \"Batch Spawn Animals\" entry to the world right-click menu. It is a cheat/testing tool for trying out the cleanup limits, so it is off by default. The menu is always available when the game is launched with -debug. The Cleaner list builder is a settings helper and is not affected by this option.",
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup": "Stray animal limit (per group)",
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup_tooltip": "Default stray-animal limit shared by ALL cleanup groups (per group, near each player). Ranched (zone/hutch), named, held or leashed animals are not counted. Use 'Per-group limit overrides' to give specific groups a different value. 0 disables animal cleanup.",
   "Sandbox_MinidoracatCleanerFor42_AnimalGroupList": "Animal cleanup groups (allowlist)",

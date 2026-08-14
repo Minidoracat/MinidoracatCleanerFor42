@@ -72,13 +72,14 @@ SandboxVars = {
     },
 }
 
-local tickHandlers, clientCommandHandlers = {}, {}
+local tickHandlers, clientCommandHandlers, worldMenuHandlers = {}, {}, {}
 Events = setmetatable({}, {
     __index = function(_, name)
         return {
             Add = function(fn)
                 if name == "OnTick" then tickHandlers[#tickHandlers + 1] = fn
-                elseif name == "OnClientCommand" then clientCommandHandlers[#clientCommandHandlers + 1] = fn end
+                elseif name == "OnClientCommand" then clientCommandHandlers[#clientCommandHandlers + 1] = fn
+                elseif name == "OnFillWorldObjectContextMenu" then worldMenuHandlers[#worldMenuHandlers + 1] = fn end
             end,
         }
     end,
@@ -264,6 +265,8 @@ local loaded = {}
 function require(name)
     if loaded[name] then return true end
     loaded[name] = true
+    -- 帶斜線的是原版路徑（如 ISUI/ISCollapsableWindow），本 harness 不載入原版，直接放行
+    if name:find("/", 1, true) then return true end
     for _, dir in ipairs({ "shared", "server", "client" }) do
         local chunk = loadfile(MEDIA .. "/" .. dir .. "/" .. name .. ".lua")
         if chunk then chunk() return true end
@@ -569,6 +572,87 @@ end
 
 for _, h in ipairs(hits) do print("        " .. h) end
 check(#hits == 0, "沒有使用 Kahlua 不存在的全域（next／assert／xpcall）")
+
+-- ===== 情境七：生成選單的預設值 =====
+-- 上面的 SandboxVars 存根**故意**不含 DebugMenuEnabled，走的正是「新存檔／管理員沒設過」
+-- 那條 DEFAULTS fallback 路徑。這條要是回歸（DEFAULTS 誤寫 true），批量生成動物又會無條件
+-- 掛在單人玩家的右鍵選單上——正是 Workshop 上被回報的那個問題。
+print()
+print("情境七：批量生成動物預設不出現")
+
+local sandbox = SandboxVars.MinidoracatCleanerFor42
+check(sandbox.DebugMenuEnabled == nil, "前提：存根未設此選項（走 DEFAULTS）")
+check(MinidoracatCleaner.getOption("DebugMenuEnabled") == false, "沒設定時預設關閉")
+
+-- 只驗 getOption 不夠：把 Picker 那行條件式寫反，上面兩條照樣會過。以下把真正的
+-- OnFillWorldObjectContextMenu handler 拉進來跑完整顯示矩陣。UI 存根只要撐得住
+-- 載入期的 derive 與選單期的 addOption／addSubMenu，不需要真的畫任何東西。
+local debugMode, clientMode, adminMode, accessLevel = false, false, false, "player"
+function isDebugEnabled() return debugMode end
+function isAdmin() return adminMode end
+function getAccessLevel() return accessLevel end
+function getSpecificPlayer() return player end
+
+local function fakeMenu()
+    local menu = { labels = {} }
+    function menu:addOption(label)
+        self.labels[#self.labels + 1] = label
+        return { label = label }
+    end
+    function menu:addSubMenu() end
+    return menu
+end
+
+ISCollapsableWindow = { derive = function() return {} end }
+ISContextMenu = { getNew = function() return fakeMenu() end }
+
+local realIsClient, realIsServer = isClient, isServer
+require "MinidoracatCleaner_Picker"
+check(#worldMenuHandlers == 1, "Picker 已註冊世界右鍵選單 handler")
+
+local fakeSquare = { getX = function() return 0 end, getY = function() return 0 end,
+                     getZ = function() return 0 end }
+local worldObjects = { { getSquare = function() return fakeSquare end } }
+
+-- 回傳這個情境下右鍵選單實際掛出來的項目標籤（getText 存根原樣回傳 key）
+local function menuLabels(opts)
+    debugMode = opts.debug or false
+    clientMode = opts.mp or false
+    adminMode = opts.admin or false
+    accessLevel = opts.admin and "admin" or "player"
+    sandbox.DebugMenuEnabled = opts.option
+    isClient = function() return clientMode end
+    isServer = function() return clientMode end   -- SP 兩者皆 false，MP 客戶端只看 isClient
+    local menu = fakeMenu()
+    worldMenuHandlers[1](1, menu, worldObjects, false)
+    isClient, isServer = realIsClient, realIsServer
+    local has = {}
+    for _, label in ipairs(menu.labels) do has[label] = true end
+    return has, #menu.labels
+end
+
+local PICKER = "IGUI_MinidoracatCleaner_PickerOpen"
+local SPAWN = "IGUI_MinidoracatCleaner_BatchSpawn"
+
+local has, n = menuLabels({})
+check(has[PICKER] and not has[SPAWN] and n == 1, "單人＋選項關：只有清單產生器，沒有生成選單")
+
+has = menuLabels({ option = true })
+check(has[PICKER] and has[SPAWN], "單人＋選項開：生成選單出現")
+
+has = menuLabels({ debug = true })
+check(has[PICKER] and has[SPAWN], "單人＋-debug：選項關著也照樣出現")
+
+has, n = menuLabels({ mp = true, option = true })
+check(n == 0, "MP 一般玩家：即使選項開著也整個選單都拿不到")
+
+has = menuLabels({ mp = true, admin = true })
+check(has[PICKER] and not has[SPAWN], "MP 管理員＋選項關：清單產生器有、生成選單沒有")
+
+has = menuLabels({ mp = true, admin = true, option = true })
+check(has[PICKER] and has[SPAWN], "MP 管理員＋選項開：兩者都在")
+
+sandbox.DebugMenuEnabled = nil
 
 print()
 if failures > 0 then
