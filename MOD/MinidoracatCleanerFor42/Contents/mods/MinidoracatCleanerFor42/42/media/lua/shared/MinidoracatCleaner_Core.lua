@@ -4,9 +4,14 @@ local Cleaner = MinidoracatCleaner
 
 Cleaner.MOD_ID = "MinidoracatCleanerFor42"
 Cleaner.COMMAND_MODULE = "MinidoracatCleaner"
--- 註：0.1.4 移除了「最後接觸者」追蹤（與丟棄者幾乎總是同一人、可靠度較低、且多一個 modData
--- 欄位會讓同型物品更難被壓縮合併）。舊存檔殘留的 MIC42_lastTouchedBy 不再讀取，無需清理。
 Cleaner.KEY_DROPPED = "MIC42_lastDroppedBy"
+-- 「最後操作者＋時間」：0.1.3 曾移除「最後接觸者」（當時假設接觸者≈丟棄者），玩家實證
+-- 背包對背包轉移完全不落地、不觸發任何丟棄章——而 B42 的一般容器轉移在 server 端純 Java
+-- 執行、無 Lua 事件也無 item log（Transaction.java:231-343 無 triggerEvent / LoggerManager），
+-- 本 MOD 不記就無跡可循，故以獨立 key 重建。舊 key MIC42_lastTouchedBy 仍不讀取。
+-- KEY_DROPPED 另承載高容忍分桶語意（isHighTolerance），兩 key 互不影響。
+Cleaner.KEY_MOVED = "MIC42_lastMovedBy"
+Cleaner.KEY_MOVED_AT = "MIC42_lastMovedAt"
 
 Cleaner.DEFAULTS = {
     AllowManualDelete = true,
@@ -45,6 +50,17 @@ Cleaner.CONSTANTS = {
     CHUNK_SIZE = 8,
     -- 警告記錄的閒置回收門檻（幾個掃描間隔沒再被掃到就丟棄）
     WARN_STALE_INTERVALS = 20,
+    -- touch 回報單批上限。與 MANUAL_DELETE_LIMIT 不同採「截斷」不採「整批拒絕」：
+    -- 蓋章漏尾端好過全批失效；成本由 buildAccessibleIndex 的 wantedIds 過濾封頂
+    TOUCH_BATCH_LIMIT = 400,
+    -- 單次可及性掃描的走訪件數硬上限（見 indexShouldStop）。取值原則：要遠高於任何
+    -- 正常請求走得到的量（正常請求在找齊時就提早收工，根本走不到這裡），又要讓單次
+    -- 最壞情況有個確定的天花板。**這是校準旋鈕不是實測值**：20000 尚未在 Kahlua＋
+    -- dedicated server 上量過耗時，且節流只限制「每秒幾次請求」不限制「每次多重」，
+    -- 故理論上仍有每秒約 10 萬件走訪的上界。真的量到會卡、或有基地大到正常操作被
+    -- 截斷（單一容器逾兩萬件；ItemNumbersLimitPerContainer 預設 0＝無件數上限），
+    -- 就往下／往上調這個值
+    INDEX_VISIT_LIMIT = 20000,
 }
 
 local function trim(value)
@@ -263,8 +279,17 @@ function Cleaner.getAnimalZoneLimitOverrides()
 end
 
 function Cleaner.sanitize(value)
-    -- 清換行/tab 防整行注入；[ ] 換成 ( ) 防偽造 log 欄位邊界（username 允許 [ ]，見 ServerWorldDatabase.java:763-779）
+    -- 清換行/tab 防整行注入；[ ] 換成 ( ) 防偽造 log 欄位邊界（username 允許 [ ]，見 ServerWorldDatabase.java:763-779）。
+    -- 注意：不可在這裡清 , 與 =——log 的 detail 欄位以它們當合法分隔符（repaired=2、type=count,...），
+    -- 一律清掉會破壞既有格式（煙霧測試情境四實際擋下過）。username 專用的加嚴版見 sanitizeName
     return tostring(value or "unknown"):gsub("[\r\n\t]", " "):gsub("%[", "("):gsub("%]", ")")
+end
+
+-- username 專用：在 sanitize 之上多清 , 與 =——它們是 log detail 欄位內的分隔符
+-- （type=count,type=count），名字一旦被未來程式寫進 detail，就能偽造假的型別/數量對。
+-- 在「寫入點」（蓋章）用這個版本，之後所有讀取路徑自動繼承保護
+function Cleaner.sanitizeName(value)
+    return (Cleaner.sanitize(value):gsub("[,=]", " "))
 end
 
 function Cleaner.log(event, who, x, y, z, detail)
@@ -361,8 +386,24 @@ end
 
 function Cleaner.stampItem(item, key, username)
     if item and username and username ~= "" then
-        rawset(item:getModData(), key, Cleaner.sanitize(username))
+        rawset(item:getModData(), key, Cleaner.sanitizeName(username))
     end
+end
+
+-- 蓋「最後操作者＋時間」章。時間為 epoch 秒（getTimestamp()，LuaManager.java:9259-9264）
+-- **取整到分鐘**：顯示本來只到分，秒級只會把同型物品的壓縮合併（CompressIdenticalItems.java:44-179，
+-- 逐 byte 比對含 modData）切得更碎；同批、同分鐘、同人搬的物品仍可合併。
+-- 此為維護者拍板的取捨，見 AGENTS.md 踩坑錄 modData 條目。
+-- 回傳寫入的時間戳，供 touchAck 把同一個值回推 client，避免兩端各自取時間造成顯示不一致
+function Cleaner.stampMove(item, username)
+    if not item or not username or username == "" then
+        return nil
+    end
+    local modData = item:getModData()
+    rawset(modData, Cleaner.KEY_MOVED, Cleaner.sanitizeName(username))
+    local at = math.floor(getTimestamp() / 60) * 60
+    rawset(modData, Cleaner.KEY_MOVED_AT, at)
+    return at
 end
 
 -- Kahlua 的 table.sort 是遞迴 quicksort，跑在 coroutine 堆疊上（MAX_STACK_SIZE=3000，
@@ -525,8 +566,39 @@ local function indexNote(ctx, id)
     end
 end
 
-local function indexComplete(ctx)
-    return ctx.wanted ~= nil and ctx.remaining <= 0
+-- 停止掃描的兩個理由：
+-- ① 要找的 id 全數到齊（提早收工，正常請求的常態出口）
+-- ② 走訪件數觸頂——**硬上限**。上面的 wantedIds 過濾只封頂「配置量」，不封頂「走訪量」：
+--    偽造封包夾帶不存在的 id 時 remaining 永不歸零，於是 9 格內每個容器、每個巢狀袋、
+--    每輛載具的每個 part 都會被翻完（ItemNumbersLimitPerContainer 預設 0＝單一容器件數
+--    無上限，ServerOptions.java:164，故「翻完」沒有自然天花板），而 OnClientCommand 是
+--    在 server 主執行緒同步跑的。這正是 AGENTS.md「上限要綁請求量、不綁世界內容量」
+--    的殘留違反。
+-- 觸頂＝提早收工回傳部分索引，不是錯誤：三個呼叫點（deleteItems／touchItems／
+-- applyTouchAck）都是「索引裡找不到就不處理」，截斷只會少做事，不會誤刪或誤蓋章。
+local function indexShouldStop(ctx)
+    -- 先判「找齊了」再判觸頂：兩者在同一次呼叫同時成立時屬正常收工，
+    -- 反過來寫會誤標 truncated 並印出誤導的診斷行
+    if ctx.wanted ~= nil and ctx.remaining <= 0 then
+        return true
+    end
+    if ctx.visited >= Cleaner.CONSTANTS.INDEX_VISIT_LIMIT then
+        ctx.truncated = true
+        return true
+    end
+    return false
+end
+
+-- 觸頂只可能由偽造封包穩定量產（正常請求早在提早收工時就結束），逐次寫 log 等於送
+-- 攻擊者一支日誌洪水原語（ZLogger >10MB 原檔截斷會沖掉真證據）→ 綁 debug 開關。
+-- 但也不能全靜默：正常玩家若真的大到被截斷，症狀是「有幾件就是刪不掉」，沒有這行
+-- 完全無從診斷（此時管理員開 debug 就看得到，並可調高 INDEX_VISIT_LIMIT）
+local function finishIndex(ctx)
+    if ctx.truncated and Cleaner.getOption("DebugMenuEnabled") == true then
+        print("[" .. Cleaner.MOD_ID .. "] accessible index truncated at "
+            .. Cleaner.CONSTANTS.INDEX_VISIT_LIMIT .. " visited items")
+    end
+    return ctx.index
 end
 
 -- 把一個容器（含巢狀袋）裡的物品登錄進索引。先登錄者優先，因此呼叫順序決定優先權
@@ -540,6 +612,9 @@ local function indexContainer(ctx, container)
     end
     for i = 0, items:size() - 1 do
         local item = items:get(i)
+        -- 計在取件處而不是命中處：走訪成本本身就發生在這裡，被 wantedIds 濾掉的件數
+        -- 才是偽造請求真正燒掉的 CPU。迴圈尾端既有的 shouldStop 檢查會接住觸頂
+        ctx.visited = ctx.visited + 1
         if item then
             local id = item:getID()
             if indexWanted(ctx, id) and ctx.index[id] == nil then
@@ -547,17 +622,21 @@ local function indexContainer(ctx, container)
                 indexNote(ctx, id)
             end
             -- 先判完成再遞迴：要找的都到齊時連這件容器的內容都不必展開
-            if indexComplete(ctx) then
+            if indexShouldStop(ctx) then
                 return
             end
             -- 巢狀袋。遞迴深度等同 vanilla 的 getItemWithIDRecursiv（ItemContainer.java:3065），
             -- 容器不可能自我包含，故無循環風險
             if instanceof(item, "InventoryContainer") then
                 indexContainer(ctx, item:getInventory())
-                if indexComplete(ctx) then
-                    return
-                end
             end
+        end
+        -- 收尾檢查放在 `if item` **之外**：visited 是無條件遞增的，若只在 item 非 nil 時
+        -- 才檢查，一串 nil entry 就能整段越過硬上限（外部審查以 probe 實證：limit=20、
+        -- 前置 25 個 nil，仍會走完 26 件並找到上限之後的目標）。vanilla 幾乎產不出 nil
+        -- entry，但「硬上限」不能靠資料剛好乾淨才成立。此處同時涵蓋遞迴返回後的複檢
+        if indexShouldStop(ctx) then
+            return
         end
     end
 end
@@ -585,6 +664,7 @@ local function indexSquare(ctx, square, playerObj, seenVehicles)
     local worldObjects = square:getWorldObjects()
     for i = 0, worldObjects:size() - 1 do
         local worldObj = worldObjects:get(i)
+        ctx.visited = ctx.visited + 1
         local item = worldObj and worldObj:getItem()
         if item then
             local id = item:getID()
@@ -593,15 +673,17 @@ local function indexSquare(ctx, square, playerObj, seenVehicles)
                 indexNote(ctx, id)
             end
             -- 同上：先判完成再展開地板袋的內容
-            if indexComplete(ctx) then
+            if indexShouldStop(ctx) then
                 return
             end
             if instanceof(item, "InventoryContainer") then
                 indexContainer(ctx, item:getInventory())
-                if indexComplete(ctx) then
-                    return
-                end
             end
+        end
+        -- 同 indexContainer：檢查放在 `if item` 之外，nil entry 才不會越過硬上限
+        -- （worldObj:getItem() 為 nil 是真實可能的，IsoWorldInventoryObject 有無 item 的建構子）
+        if indexShouldStop(ctx) then
+            return
         end
     end
 
@@ -609,7 +691,7 @@ local function indexSquare(ctx, square, playerObj, seenVehicles)
     for i = 0, staticObjects:size() - 1 do
         local object = staticObjects:get(i)
         indexContainer(ctx, object:getContainer())
-        if indexComplete(ctx) then
+        if indexShouldStop(ctx) then
             return
         end
     end
@@ -619,7 +701,7 @@ local function indexSquare(ctx, square, playerObj, seenVehicles)
         local object = objects:get(i)
         for containerIndex = 0, object:getContainerCount() - 1 do
             indexContainer(ctx, object:getContainerByIndex(containerIndex))
-            if indexComplete(ctx) then
+            if indexShouldStop(ctx) then
                 return
             end
         end
@@ -632,7 +714,7 @@ local function indexSquare(ctx, square, playerObj, seenVehicles)
             local part = vehicle:getPartByIndex(partIndex)
             if part:getItemContainer() and vehicle:canAccessContainer(partIndex, playerObj) then
                 indexContainer(ctx, part:getItemContainer())
-                if indexComplete(ctx) then
+                if indexShouldStop(ctx) then
                     return
                 end
             end
@@ -645,9 +727,11 @@ end
 -- 因為先呼叫 getItemWithID 再呼叫涵蓋它的 getItemWithIDRecursiv）——批量刪 90 件就等於把同一份
 -- 掃描做 90 遍，全部擠在 OnClientCommand 的同一次同步回呼裡。改成建一次索引後成本是 O(掃描 + N)。
 -- 安全檢查（保險屋／阻隔／載具可存取）改為每格做一次，語意不變。
--- wantedIds（選填）：只需要這些 id 時，全部到齊即可停止掃描，其餘容器連碰都不碰
+-- wantedIds（選填）：只需要這些 id 時，全部到齊即可停止掃描，其餘容器連碰都不碰。
+-- 走訪件數另有硬上限（INDEX_VISIT_LIMIT，見 indexShouldStop）：找不齊時也不會無限翻下去，
+-- 觸頂即回傳當下的部分索引
 function Cleaner.buildAccessibleIndex(playerObj, range, wantedIds)
-    local ctx = { index = {}, found = {}, wanted = nil, remaining = 0 }
+    local ctx = { index = {}, found = {}, wanted = nil, remaining = 0, visited = 0 }
     if not playerObj then
         return ctx.index
     end
@@ -667,8 +751,8 @@ function Cleaner.buildAccessibleIndex(playerObj, range, wantedIds)
     -- 玩家自己的背包最先登錄：優先權與舊版「先查自己身上」一致，也讓「刪自己背包裡的東西」
     -- 這個最常見的情形在這裡就收工，完全不必碰世界
     indexContainer(ctx, playerObj:getInventory())
-    if indexComplete(ctx) then
-        return ctx.index
+    if indexShouldStop(ctx) then
+        return finishIndex(ctx)
     end
 
     range = range or 1
@@ -683,14 +767,14 @@ function Cleaner.buildAccessibleIndex(playerObj, range, wantedIds)
                 local square = getCell():getGridSquare(x, y, pz)
                 if square and squareAccessible(square, playerObj, playerSquare) then
                     indexSquare(ctx, square, playerObj, seenVehicles)
-                    if indexComplete(ctx) then
-                        return ctx.index
+                    if indexShouldStop(ctx) then
+                        return finishIndex(ctx)
                     end
                 end
             end
         end
     end
-    return ctx.index
+    return finishIndex(ctx)
 end
 
 function Cleaner.removeFloorItem(item, worldObj, square)

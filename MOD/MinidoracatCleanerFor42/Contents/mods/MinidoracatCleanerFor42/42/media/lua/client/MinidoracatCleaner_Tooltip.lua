@@ -3,6 +3,37 @@ require "ISUI/ISToolTipInv"
 
 local Cleaner = MinidoracatCleaner
 
+-- 「最後操作時間」格式化：存的是 epoch 秒（UTC、分鐘取整），這裡用 Calendar.getInstance()
+-- 落在**客戶端本地時區**——不能用 os.date，Kahlua 的 OsLib 把時區寫死成 UTC（OsLib.java:331）。
+-- Calendar 是 PZCalendar 薄包裝的暴露別名（LuaManager.java:1548-1567,2430），SimpleDateFormat
+-- 於 LuaManager.java:1699 暴露；vanilla 同款用法：MapSpawnSelect.lua:542-543（SimpleDateFormat.new
+-- + format(Calendar:getTime())）、ISRunningDebugUI.lua:93-97（setTimeInMillis）。
+-- tooltip 每 frame 量測＋實繪兩個 pass 都會走到，SDF 只建一次、格式化結果依時間戳快取，
+-- 避免每 frame 配置 Java 物件
+local timeFormatter = nil
+local timeCacheAt, timeCacheText = nil, nil
+local timeFormatWarned = false
+local function formatMovedAt(at)
+    if timeCacheAt ~= at then
+        -- 失敗不值得賠掉整個 tooltip（render 覆寫一炸＝所有物品無提示，正式服踩過同型坑）：
+        -- pcall 包住，退化成只顯示名字不顯示時間
+        local ok, text = pcall(function()
+            timeFormatter = timeFormatter or SimpleDateFormat.new("yyyy-MM-dd HH:mm", Locale.ENGLISH)
+            local cal = Calendar.getInstance()
+            cal:setTimeInMillis(at * 1000)
+            return timeFormatter:format(cal:getTime())
+        end)
+        timeCacheAt = at
+        timeCacheText = ok and text or nil
+        -- 靜默退化會讓「時間永遠不顯示」無從診斷：首次失敗留一行 console（只印一次）
+        if not ok and not timeFormatWarned then
+            timeFormatWarned = true
+            print("[" .. Cleaner.MOD_ID .. "] tooltip time format failed: " .. tostring(text))
+        end
+    end
+    return timeCacheText
+end
+
 local function getTraceLines(item)
     -- self.item 不保證是 InventoryItem：ISToolTipInv 不只用於物品欄，原版另有兩處把別的
     -- 東西塞進同一個 tooltip——ISEnergyBar.lua:90 傳電力資源、ISFluidBar.lua:220 傳流體容器，
@@ -16,10 +47,28 @@ local function getTraceLines(item)
     local modData = item:getModData()
     -- modData 是 Kahlua 原生 table：只能用全域 rawget(t,k)，方法式 t:rawget(k) 是 table 索引查找→call nil 爆錯
     local dropped = rawget(modData, Cleaner.KEY_DROPPED)
-    if not dropped or dropped == "" then
+    local moved = rawget(modData, Cleaner.KEY_MOVED)
+    local hasDropped = dropped ~= nil and dropped ~= ""
+    local hasMoved = moved ~= nil and moved ~= ""
+    if not hasDropped and not hasMoved then
         return nil
     end
-    return { { getText("IGUI_MinidoracatCleaner_LastDropped"), tostring(dropped) } }
+    local lines = {}
+    if hasDropped then
+        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastDropped"), tostring(dropped) }
+    end
+    if hasMoved then
+        local value = tostring(moved)
+        local at = tonumber(rawget(modData, Cleaner.KEY_MOVED_AT))
+        if at then
+            local timeText = formatMovedAt(at)
+            if timeText then
+                value = value .. " (" .. timeText .. ")"
+            end
+        end
+        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastMoved"), value }
+    end
+    return lines
 end
 
 local function appendTraceBlock(tooltip, lines)

@@ -5,6 +5,7 @@
   "IGUI_MinidoracatCleaner_WarnItems": "Too many dropped items are nearby. Cleanup will begin if the next scan is still over the limit.",
   "IGUI_MinidoracatCleaner_WarnAnimals": "Too many cleanup-eligible animals are nearby. Cleanup will begin if the next scan is still over the limit.",
   "IGUI_MinidoracatCleaner_LastDropped": "Last dropped by",
+  "IGUI_MinidoracatCleaner_LastMoved": "Last handled by",
   "IGUI_MinidoracatCleaner_CleanedItems": "[Cleaner] Automatically removed excess items nearby: %1 x%2.",
   "IGUI_MinidoracatCleaner_CleanedAnimals": "[Cleaner] Automatically removed excess animals nearby: %1 x%2.",
   "IGUI_MinidoracatCleaner_PickerTitle": "Cleaner - List Builder",

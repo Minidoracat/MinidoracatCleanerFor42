@@ -5,6 +5,7 @@
   "IGUI_MinidoracatCleaner_WarnItems": "附近丢弃的物品过多。如果下次扫描仍超过上限，将开始清理。",
   "IGUI_MinidoracatCleaner_WarnAnimals": "附近可清理的动物过多。如果下次扫描仍超过上限，将开始清理。",
   "IGUI_MinidoracatCleaner_LastDropped": "最后丢弃者",
+  "IGUI_MinidoracatCleaner_LastMoved": "最后操作者",
   "IGUI_MinidoracatCleaner_CleanedItems": "「清理系统」已自动清理附近超量物品：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedAnimals": "「清理系统」已自动清除附近超量动物：%1 ×%2。",
   "IGUI_MinidoracatCleaner_PickerTitle": "清理系统 - 清单生成器",

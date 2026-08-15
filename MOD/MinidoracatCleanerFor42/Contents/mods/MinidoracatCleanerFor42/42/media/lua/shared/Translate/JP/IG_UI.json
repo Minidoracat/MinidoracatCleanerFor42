@@ -5,6 +5,7 @@
   "IGUI_MinidoracatCleaner_WarnItems": "近くに捨てられたアイテムが多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",
   "IGUI_MinidoracatCleaner_WarnAnimals": "近くに清掃対象の動物が多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",
   "IGUI_MinidoracatCleaner_LastDropped": "最後に捨てた人",
+  "IGUI_MinidoracatCleaner_LastMoved": "最後に操作した人",
   "IGUI_MinidoracatCleaner_CleanedItems": "「クリーナー」周辺の過剰なアイテムを自動整理しました：%1 ×%2。",
   "IGUI_MinidoracatCleaner_CleanedAnimals": "「クリーナー」周辺の過剰な動物を自動除去しました：%1 ×%2。",
   "IGUI_MinidoracatCleaner_PickerTitle": "クリーナー - リスト作成",
