@@ -171,7 +171,7 @@ for m in MEDIA_DIRS:
     langs = sorted(d for d in os.listdir(troot) if os.path.isdir(os.path.join(troot, d)))
     tolerant = set(langs) <= {"CH", "CN"}   # 翻譯包偵測
     names = sorted({n for l in langs for n in os.listdir(os.path.join(troot, l)) if n.endswith(".json")})
-    mismatch, badpct, broken = [], [], []
+    mismatch, badpct, badmd, broken = [], [], [], []
     for n in names:
         keysets = {}
         for l in langs:
@@ -189,6 +189,10 @@ for m in MEDIA_DIRS:
             for k, v in data.items():
                 if find_bare_pct(v, tolerant):
                     badpct.append(f"{l}/{n} 的 {k}")
+                # PZ 的沙盒 tooltip 與 UI 字串都是純文字，不解析 Markdown：寫 **粗體**
+                # 會把四個星號原樣顯示給玩家。強調只能靠措辭（「注意：」）或全大寫
+                if "**" in v or "`" in v:
+                    badmd.append(f"{l}/{n} 的 {k}")
         if len(keysets) > 1:
             base = next(iter(keysets.values()))
             for l, ks in keysets.items():
@@ -201,6 +205,8 @@ for m in MEDIA_DIRS:
     fail("翻譯鍵集一致", mismatch) if mismatch else ok(f"翻譯鍵集一致（{'/'.join(langs)}）")
     pct_label = "翻譯值無裸 %（翻譯包模式：另接受 printf 指令）" if tolerant else "翻譯值無裸 %（僅 %1-%9 與 %%）"
     fail(pct_label, sorted(set(badpct))) if badpct else ok(pct_label)
+    md_label = "翻譯值無 Markdown 標記（PZ 純文字顯示，** 與 ` 會原樣露出）"
+    fail(md_label, sorted(set(badmd))) if badmd else ok(md_label)
 
 # ---- 5+6. Kahlua 禁用全域 / table.sort ----
 FORBIDDEN = ("next", "assert", "xpcall")

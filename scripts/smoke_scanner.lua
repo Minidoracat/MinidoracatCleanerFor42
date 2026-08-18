@@ -1,5 +1,5 @@
 --[[
-用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua，跑二十個情境並斷言結果。
+用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua，跑二十六個情境並斷言結果。
 
     lua scripts/smoke_scanner.lua        （在 repo 根目錄執行）
 
@@ -35,6 +35,15 @@
           由大到小挑而掉落物 append 在尾端）；victim 前面隔著超過額度的物件時要觸頂放掉
 情境十九：刪除前必須讀**當前**上限而不是排入當時的快照——管理員可在執行期改 sandbox，
           照舊值刪會刪掉當前政策允許保留的物品
+情境二十：同型的多個 victim 必須共用「來源讀不到」的結論（0-cache 以 bucket＋fullType 為界，
+          否則每個 victim 各自重探同一批卸載來源）
+情境二十一：多位玩家的掃描盒重疊時，重疊區塊只能掃一次——去重表必須跨 tick 存活，且
+            fixture 要挑到讓「第二次命中」真的落在第二個 tick
+情境二十二：玩家站在 z≠0 時，z=0 與當前層都要掃（少了這條，二樓玩家看不到樓下的堆積）
+情境二十三：區塊清單的漸進建構——建構期間不掃描，且必須每 tick 前進到完成
+情境二十四：物品清理的分類總開關（關閉時連超標也不動，重新開啟後要恢復）
+情境二十五：單一熱點落盤失敗不得牽連其他熱點，例外仍要可見，且已寫出的熱點不得被重放
+情境二十六：刪除爆發中途被停用時，已刪除的部分仍要落盤（落盤的第二個出口）
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -305,7 +314,15 @@ ItemPicker = {
 
 -- ContainerOverlays.java:131-133 與 :135-137：底圖是否登記在容器 overlay 表裡，
 -- 以及某張 overlay 反查得到哪些底圖（用來確認 overlay 真的出自容器系統）
+--
+-- overlayFetches 數的是「取得 overlay 表」本身的次數。它是引擎單例
+-- （LuaManager.java:11976-11982 回 ContainerOverlays.instance），所以整份掃描工作只該取
+-- 一次；放進 per-square 的修復函式就會變成每 tick SQUARES_PER_TICK 次 Kahlua→Java 往返。
+-- 沒有這個計數器的話，把取得處搬回每格呼叫不會讓任何斷言轉紅（實測過），那條效能契約
+-- 就等於沒被釘住
+overlayFetches = 0
 function getContainerOverlays()
+    overlayFetches = overlayFetches + 1
     return {
         hasOverlays = function(_, obj) return obj._inOverlayMap == true end,
         getUnderlyingSpriteNames = function(_, overlayName)
@@ -343,12 +360,13 @@ end
 
 local playerInv = makeContainer("player")
 -- 座標用變數而非常數：情境十二要驗「area 記錄是 per-player」——玩家搬家後，舊來源區塊
--- 不再屬於他的掃描盒，就不該再被併進他的來源集。其餘情境都不動這兩個值，行為與原本相同
-local playerX, playerY = 100, 100
+-- 不再屬於他的掃描盒，就不該再被併進他的來源集。z 也要可變：站在 z≠0 時掃描會同時排入
+-- z=0 與當前層（見 newPeriodicBuild），那條分支需要專門的情境。其餘情境都不動這些值
+local playerX, playerY, playerZ = 100, 100, 0
 local player = {
     getX = function() return playerX end,
     getY = function() return playerY end,
-    getZ = function() return 0 end,
+    getZ = function() return playerZ end,
     getUsername = function() return "tester" end,
     getOnlineID = function() return 1 end,
     getCurrentSquare = function() return playerHasSquare and getOrMakeSquare(100, 100, 0) or nil end,
@@ -419,6 +437,21 @@ local function maxFloorId(fullType)
         end
     end
     return best
+end
+-- 只數某一層的地板物品。情境二十二要驗「站在 z≠0 時 z=0 與當前層都會被掃」，而全域的
+-- countFloor 把兩層加在一起、看不出哪層被清；分層數才能區分「兩層都清」與「只清一層」
+local function countFloorAtZ(fullType, z)
+    local n = 0
+    for _, square in pairs(world) do
+        if square:getZ() == z then
+            for _, worldObj in ipairs(square._objs) do
+                if worldObj:getItem():getFullType() == fullType then
+                    n = n + 1
+                end
+            end
+        end
+    end
+    return n
 end
 
 -- ===== 情境一：混合來源的同種地面物品 =====
@@ -680,14 +713,31 @@ check(#repairLogs == 1, "整趟掃描只寫一行 container_repair 記錄（聚�
 check(repairLogs[1] and repairLogs[1]:find("repaired=2", 1, true) ~= nil,
     "那一行涵蓋兩個容器（repaired=2，證明是聚合而非逐容器輸出）")
 
--- 第二輪：世界已修完，指紋消失，不該再寫任何 container_repair
+-- 第二輪：世界已修完，指紋消失，不該再寫任何 container_repair。
+-- 同時量 overlay 表的提取次數：它是引擎單例，每份掃描工作只該取一次。
 nowMs = nowMs + 61000
+local fetchBefore = overlayFetches
+gridLookups = 0
 runTicks(600)
+local fetchDelta = overlayFetches - fetchBefore
 local repairLogsAfter = 0
 for _, line in ipairs(logLines) do
     if line:find("container_repair", 1, true) then repairLogsAfter = repairLogsAfter + 1 end
 end
 check(repairLogsAfter == 1, "第二輪掃描零新增（修完即收斂，不會重複處理）")
+
+-- 活性先行：沒有這條，「提取次數很少」也可能只是因為這一輪根本沒有工作跑
+check(gridLookups > 0,
+    "這一輪真的有掃描（查格 " .. gridLookups .. " 次；沒有這條，下面的少量提取可能只是空轉）")
+-- 上限寫死成 4：一輪裡最多一個 periodic 加少數 dirty job，每個 job 取一次。
+-- 刻意不寫成「等於 job 數」或去讀常數——自我參照的斷言釘不住任何東西。
+-- 若把 getContainerOverlays() 搬回 repairBrokenContainers 內（每格一次），這個數字會
+-- 直接變成上面那個查格數的同一量級（上千），斷言立刻轉紅
+check(fetchDelta >= 1 and fetchDelta <= 4,
+    "overlay 表每份工作只取一次（實際 " .. fetchDelta .. " 次，上限 4）")
+check(fetchDelta * 50 < gridLookups,
+    "提取次數與走訪格數不同量級（" .. fetchDelta .. " vs 查格 " .. gridLookups
+        .. "；釘住『不是 per-square 取得』）")
 
 -- ===== 情境六：Kahlua 沒有的標準 Lua 全域（靜態掃描）=====
 -- 這個 harness 跑在標準 Lua 上，next/assert/xpcall 全都存在，所以「執行測試」在架構上
@@ -1558,6 +1608,21 @@ runTicks(3000)
 check(countFloor("Base.Tissue") == 160,
     "victim 前面隔著超過額度的物件時 find 觸頂放掉、這一輪不刪（釘住 find 物件額度）")
 
+-- 收尾：把這個情境堆的東西從世界移掉。decoy 各 2500 件而區塊上限是 100，它們會**永遠**超標
+-- ⇒ 每一輪掃描都排入約 4800 個 victim 佔住全域刪除佇列，讓後面情境的清理時序完全不可控
+-- （實測讓情境二十的活性檢查與情境二十二的分層斷言各有一成機率偶發假紅）。
+-- 情境之間共用 world／deleteQueue，製造大量永久超標的 fixture 就要自己收乾淨
+for _, sq in pairs(world) do
+    for i = #sq._objs, 1, -1 do
+        local ft = sq._objs[i]:getItem():getFullType()
+        if ft == "Base.Decoy" or ft == "Base.Decoy2" or ft == "Base.Tissue" then
+            table.remove(sq._objs, i)
+        end
+    end
+end
+check(countFloor("Base.Decoy") == 0 and countFloor("Base.Tissue") == 0,
+    "收尾：本情境的 fixture 已從世界移除（避免污染後續情境的刪除佇列）")
+
 print()
 print("情境十九：刪除前必須讀當前上限，不是排入當時的快照")
 
@@ -1662,6 +1727,397 @@ sandbox.MaxFloorItemsPerType = savedChunk20
 sandbox.ScanRadius = savedRadius20
 sandbox.MaxFloorItemsPerType = savedChunk17
 sandbox.MaxFloorItemsPerTypeArea = savedArea17
+
+print()
+print("情境二十一：多位玩家的掃描盒重疊時，重疊區塊只能掃一次")
+
+-- 區塊清單是漸進建構的（每 tick 一批），去重必須跨 tick 存活，否則同一個區塊會被建進
+-- chunks 兩次、掃描時計數翻倍。這條之前完全沒被涵蓋——其他情境的玩家都相距很遠
+-- （情境十二是 (100,100) 與 (300,300)），去重分支從來沒被走到。
+--
+-- 半徑要選到讓建構**真的跨 tick**：建構步數是 #玩家 ×(2r/8+1)²×樓層，r=16 只有
+-- 2×5×5＝50 步 < CHUNKS_PER_TICK（128），一個 tick 就建完 ⇒ 「跨 tick 存活」這個性質
+-- 根本沒被執行（把去重表改成每次呼叫都重建也不會轉紅）。r=32 是 2×9×9＝162 步 > 128，
+-- 至少兩個 tick。下面用 gridLookups 當活性證據，證明第一個 tick 真的還在建構而非已在掃描
+-- 佈局：兩位玩家相距 8 格（掃描盒大量重疊），重疊區某塊放 6 件、區塊上限 10。
+-- 去重正常 ⇒ 數到 6，不清理；去重失效 ⇒ 數到 12 > 10 ⇒ 會清掉 2 件
+local savedRadius21 = sandbox.ScanRadius
+local savedChunk21 = sandbox.MaxFloorItemsPerType
+local savedArea21 = sandbox.MaxFloorItemsPerTypeArea
+sandbox.ScanRadius = 32
+sandbox.MaxFloorItemsPerType = 10
+sandbox.MaxFloorItemsPerTypeArea = 2000  -- 讓 area 不介入，隔離出 chunk 路徑
+
+local neighbour = {
+    getX = function() return 108 end,
+    getY = function() return 100 end,
+    getZ = function() return 0 end,
+    getUsername = function() return "overlap" end,
+    getOnlineID = function() return 3 end,
+    getCurrentSquare = function() return getOrMakeSquare(108, 100, 0) end,
+    getInventory = function() return makeContainer("player") end,
+    isEquipped = function() return false end,
+    isAttachedItem = function() return false end,
+}
+onlineRoster = { player, neighbour }
+
+-- 座標要挑到讓「同一個 key 被第二次遇到」發生在**另一個 tick**，否則去重命中仍在單一
+-- tick 內完成，跨 tick 存活這個性質還是沒被測到。建構順序是 range1（player）整段 81 步、
+-- 接著 range2（neighbour）——第一個 tick 的 128 步只吃到 range2 的 offset 0..46。
+-- 區塊 (13,13) 在 range1 的 offset 是 50（第一個 tick 建立），在 range2 是 49
+-- ⇒ 全域第 130 步 ⇒ 第二個 tick 才碰到它、去重命中因此橫跨 tick 邊界。
+-- 兩人的掃描盒（各 ±32 格）都涵蓋這一格：區塊 13 是 x 104..111、y 104..111
+for _ = 1, 6 do
+    putOnFloor(105, 108, 0, makeItem("Base.Twig2", "dumper"))
+end
+
+-- fixture 前提的健全性檢查。下面的主斷言是**缺席型**（沒有警告），它的意義完全建立在
+-- 「第二次命中落在第二個 tick」這個算式結果上：全域第 130 步。若 CHUNKS_PER_TICK 日後被
+-- 調到 130 以上，建構仍然跨 tick（上面的 gridLookups 活性斷言照樣綠），但去重命中會退回
+-- 單一 tick 內完成，被測性質就靜默消失而測試維持全綠。130 是從 offset 算式寫死推導的，
+-- 只拿常數來比較，不是拿常數當期望值
+local SECOND_HIT_GLOBAL_STEP = 130
+check(MinidoracatCleaner.CONSTANTS.CHUNKS_PER_TICK < SECOND_HIT_GLOBAL_STEP,
+    "fixture 前提成立：第二次命中在全域第 130 步，而 CHUNKS_PER_TICK＝"
+        .. MinidoracatCleaner.CONSTANTS.CHUNKS_PER_TICK .. " 更小，命中確實跨 tick")
+check(countFloor("Base.Twig2") == 6, "起始：重疊區某塊 6 件（區塊上限 10）")
+
+-- 先把前面殘留的掃描工作跑完，否則 periodicQueued 還卡著、下面不會排入新工作
+runTicks(40000)
+
+-- sentCommands 是全域累積的，只數本情境新發的
+local sentBefore21 = #sentCommands
+nowMs = nowMs + 61000
+gridLookups = 0
+runTicks(1)
+check(gridLookups == 0,
+    "第一個 tick 仍在建構、尚未掃描（162 步 > 128 ⇒ 建構必定跨 tick，實際查格 "
+        .. gridLookups .. " 次）")
+
+runTicks(3000)
+nowMs = nowMs + 61000
+runTicks(3000)
+
+-- 斷言看的是**警告**，不是物品數。去重失效時掃描快照會把這塊數成 12（>上限 10）並發出
+-- 超標警告，但物品不會被誤刪——刪除前的 recount 以實體世界重數（liveChunkCount，見
+-- WorldScanner 的 processDeleteQueue：live=6 ≤ 10 ⇒ victim 取消）。所以「還剩 6 件」
+-- 在去重失效時同樣成立，用它當斷言等於什麼都沒釘住（實測變異不轉紅）。
+-- 真正的可觀測後果是玩家收到假警告，加上掃描量從 90 塊變成 162 塊
+local twigWarns = 0
+for index = sentBefore21 + 1, #sentCommands do
+    local sent = sentCommands[index]
+    -- Core.warnNearby 送的 command 就是 "warn"，payload.detail 是 fullType
+    -- （MinidoracatCleaner_Core.lua:541-542）
+    if sent.command == "warn" and sent.args and sent.args.detail == "Base.Twig2" then
+        twigWarns = twigWarns + 1
+    end
+end
+check(twigWarns == 0,
+    "重疊區塊只被計一次 ⇒ 6 ≤ 10 不發超標警告（實際發了 " .. twigWarns
+        .. " 則；釘住跨 tick 的建構去重）")
+check(countFloor("Base.Twig2") == 6,
+    "且物品一件未動（刪除前 recount 是第二道保險）")
+
+print()
+print("情境二十二：玩家站在 z≠0 時，z=0 與當前層都要掃")
+
+-- newPeriodicBuild 對 z≠0 的玩家會把 z=0 與當前層都排進來（levels[2] = playerZ）。
+-- 少了這條，站在二樓時樓下的堆積永遠不會被清——而且不會有任何錯誤，只是靜默失效。
+-- 佈局：玩家在 z=1，z=0 與 z=1 各堆 15 件（區塊上限 10）⇒ 兩層都該被清到 10
+onlineRoster = nil
+-- 換 z 之前必須把前一個情境的週期掃描跑完：periodicQueued 在 finishJob 之後才清，若還卡著
+-- 未完成的 job，下面 nowMs 推進時 queuePeriodicScan 會直接 return（不排新工作），於是
+-- 這一輪用的仍是舊 job 的範圍——那份是 playerZ 還等於 0 時建的，z=1 的 fixture 不在裡面。
+-- 實測會讓這條有一半機率量到 25~30 而非 20（不推進 nowMs，所以只消化不新排）。
+-- tick 數要給足：情境十八在世界裡留了 5000 個 decoy，它們每輪都會被排進刪除佇列，
+-- 而佇列是全域共用的——沒排空就進下一個情境，新的 victim 會卡在後面等，
+-- 於是 warn 有寫、auto_clean 卻一直沒發生
+runTicks(40000)
+playerZ = 1
+for _ = 1, 15 do
+    putOnFloor(101, 101, 0, makeItem("Base.Twig3", "dumper"))
+    putOnFloor(101, 101, 1, makeItem("Base.Twig3", "dumper"))
+end
+check(countFloor("Base.Twig3") == 30, "起始：z=0 與 z=1 各 15 件（區塊上限 10）")
+
+-- 斷言用「兩層各自都有被清」而不是「總量恰好 20」：dirty job 會插隊（前面情境刪了數千件、
+-- 每次刪除都會 markDirty），週期掃描被延後的輪數不可控，寫死總量會有一半機率偶發假紅。
+-- 分層檢查已足以抓住要守的迴歸——少了 levels[2] 那行，z=1 會一件都不掉
+local rounds22 = 0
+for _ = 1, 12 do
+    nowMs = nowMs + 61000
+    runTicks(3000)
+    rounds22 = rounds22 + 1
+    if countFloorAtZ("Base.Twig3", 0) < 15 and countFloorAtZ("Base.Twig3", 1) < 15 then
+        break
+    end
+end
+check(countFloorAtZ("Base.Twig3", 0) < 15,
+    "z=0 那層被清（剩 " .. countFloorAtZ("Base.Twig3", 0) .. " 件）")
+check(countFloorAtZ("Base.Twig3", 1) < 15,
+    "z=1 那層也被清（剩 " .. countFloorAtZ("Base.Twig3", 1)
+        .. " 件，用了 " .. rounds22 .. " 輪；釘住 z≠0 時的雙層掃描）")
+
+playerZ = 0
+sandbox.ScanRadius = savedRadius21
+sandbox.MaxFloorItemsPerType = savedChunk21
+sandbox.MaxFloorItemsPerTypeArea = savedArea21
+
+print()
+print("情境二十三：區塊清單必須跨 tick 建構，不可一次建完")
+
+-- 這是本次效能修正的核心，而它需要「區塊數 > CHUNKS_PER_TICK」才會走到——前面所有情境的
+-- ScanRadius 都是 16（每位玩家 5×5＝25 個區塊 < 128），stepPeriodicBuild 一個 tick 就建完，
+-- 「還沒建完就 return」那條路徑從來沒被執行過。
+-- 佈局：ScanRadius 80 ⇒ 21×21＝441 個區塊，在 CHUNKS_PER_TICK=128 之下需要 4 個 tick。
+-- 活性證據用 gridLookups：建構期間完全不呼叫 getGridSquare，所以前幾個 tick 必須是 0，
+-- 之後才會開始逐格掃描。
+-- 放在最後一條：ScanRadius 80 的掃描盒會涵蓋前面情境的 fixture，跑完整輪會干擾它們
+local savedRadius23 = sandbox.ScanRadius
+
+-- 先把前面殘留的掃描工作跑完，否則 periodicQueued 還卡著、下面不會排入新工作
+runTicks(40000)
+sandbox.ScanRadius = 80
+
+nowMs = nowMs + 61000
+gridLookups = 0
+runTicks(3)
+check(gridLookups == 0,
+    "建構期間一格都沒查（前 3 個 tick 只在建 441 個區塊的清單，實際 " .. gridLookups .. " 次）")
+
+runTicks(5)
+check(gridLookups > 0,
+    "建構完成後才開始逐格掃描（實際 " .. gridLookups .. " 次，釘住跨 tick 建構）")
+
+sandbox.ScanRadius = savedRadius23
+
+print()
+print("情境二十四：物品清理的分類總開關")
+
+-- 總開關的用途是「不必把四個上限逐一改成 0 就能停用整套物品清理」。
+-- 要守兩個方向：關閉時連超標也不動、重新開啟後恢復正常清理（不能因為關過就永久失效）。
+-- 動物那個開關走的是同一套判定（AnimalScanner.runAnimalScan 開頭），但 harness 沒有動物的
+-- mock（全檔零個動物情境），所以那邊只能靠實機驗證——這裡誠實留下缺口說明，不假裝有覆蓋
+local savedChunk24 = sandbox.MaxFloorItemsPerType
+local savedArea24 = sandbox.MaxFloorItemsPerTypeArea
+sandbox.MaxFloorItemsPerType = 10
+sandbox.MaxFloorItemsPerTypeArea = 2000
+sandbox.ItemCleanupEnabled = false
+
+for _ = 1, 30 do
+    putOnFloor(99, 103, 0, makeItem("Base.Nut", "dumper"))
+end
+check(countFloor("Base.Nut") == 30, "起始：同一塊 30 件（區塊上限 10、總開關關閉）")
+
+for _ = 1, 3 do
+    nowMs = nowMs + 61000
+    runTicks(3000)
+end
+check(countFloor("Base.Nut") == 30,
+    "總開關關閉時，超標也完全不清（釘住總開關優先於上限）")
+
+sandbox.ItemCleanupEnabled = true
+local rounds24 = 0
+for _ = 1, 10 do
+    nowMs = nowMs + 61000
+    runTicks(3000)
+    rounds24 = rounds24 + 1
+    if countFloor("Base.Nut") == 10 then
+        break
+    end
+end
+check(countFloor("Base.Nut") == 10,
+    "重新開啟後恢復清理、清到上限 10（用了 " .. rounds24 .. " 輪；關過不會永久失效）")
+sandbox.MaxFloorItemsPerType = savedChunk24
+sandbox.MaxFloorItemsPerTypeArea = savedArea24
+
+print()
+print("情境二十五：單一熱點落盤失敗，不得牽連其他熱點，也不得重複寫出")
+
+-- 落盤（auto_clean log ＋ 玩家通知）刻意**不重試**：真正該重試的寫檔失敗根本傳不到 Lua
+-- （ZLogger.write 把 Exception 全 catch 掉只印 DebugLog，ZLogger.java:48-54），而對 Lua 層
+-- 例外重放整張表會每 tick 拋一份堆疊（Event.trigger 逐次 catch 後照常註冊，
+-- Event.java:52-59）並重複寫 log／重複通知玩家。設計改成「先從表移除、每個熱點各自 pcall、
+-- 首個錯誤最後重拋」，要守的是三件事：
+--   ① 壞掉的那一個熱點不會把其他熱點的稽核一起帶走
+--   ② 例外仍然可見（不是靜默吞掉）
+--   ③ 已寫出的熱點不會被重放（下一個 tick 不再出現第二行）
+local savedChunk25 = sandbox.MaxFloorItemsPerType
+local savedArea25 = sandbox.MaxFloorItemsPerTypeArea
+sandbox.MaxFloorItemsPerType = 10
+sandbox.MaxFloorItemsPerTypeArea = 2000
+sandbox.ItemCleanupEnabled = true
+
+-- 只讓「指定 fullType 的 auto_clean 那一行」拋錯，其餘 log 照常寫
+local failFullType = nil
+local realWriteLog = writeLog
+function writeLog(logger, text)
+    if failFullType and string.find(text, "auto_clean", 1, true)
+        and string.find(text, failFullType, 1, true) then
+        error("模擬落盤路徑的 Lua 例外")
+    end
+    return realWriteLog(logger, text)
+end
+
+local function countAutoClean(fullType)
+    local n = 0
+    for _, line in ipairs(logLines) do
+        if string.find(line, "auto_clean", 1, true)
+            and string.find(line, fullType, 1, true) then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+local function countCleanedNotices(fullType, fromIndex)
+    local n = 0
+    for index = fromIndex + 1, #sentCommands do
+        local sent = sentCommands[index]
+        if sent.command == "cleaned" and sent.args and sent.args.detail == fullType then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- 兩個熱點放在**不同區塊**才會是兩筆 cleanNotify（key 含區塊座標）。
+-- 座標要落在玩家 (100,100) 於 ScanRadius 16 之下的區塊範圍（cx/cy 10..14，即格 80..119）：
+-- 區塊 (10,14) 與 (12,14)。各 25 件、上限 10 ⇒ 各要刪 15 件。
+-- 兩塊合計刪 30 件 > ITEMS_PER_TICK（16）⇒ 跨 tick，排空時一次落盤兩筆
+for _ = 1, 25 do
+    putOnFloor(81, 113, 0, makeItem("Base.ProbeBad", "dumper"))
+    putOnFloor(97, 114, 0, makeItem("Base.ProbeGood", "dumper"))
+end
+check(countFloor("Base.ProbeBad") == 25 and countFloor("Base.ProbeGood") == 25,
+    "起始：兩個不同區塊各 25 件（上限 10，各要刪 15 件）")
+
+local sentBefore25 = #sentCommands
+failFullType = "Base.ProbeBad"
+nowMs = nowMs + 61000
+runTicks(3000)   -- 警告輪
+nowMs = nowMs + 61000
+runTicks(3000)   -- 清理輪 → 排空 → 落盤（壞熱點拋錯，被逐項 pcall 攔下）
+
+check(countFloor("Base.ProbeBad") == 10 and countFloor("Base.ProbeGood") == 10,
+    "兩塊都已刪到上限（刪除在落盤之前，不可逆）")
+check(countAutoClean("Base.ProbeBad") == 0,
+    "壞掉的那個熱點沒有稽核行（它的 log 寫不出去）")
+-- emitCleanEntry 內是「先寫稽核、後發通知」，讓部分成功落在最少害的位置：
+-- 稽核優先於通知。順序若被對調，壞熱點會變成「玩家收到清理通知、稽核檔案卻沒有那一行」
+check(countCleanedNotices("Base.ProbeBad", sentBefore25) == 0,
+    "壞熱點也沒有發出玩家通知（釘住 emitCleanEntry 內先 log 後通知的順序；實際 "
+        .. countCleanedNotices("Base.ProbeBad", sentBefore25) .. " 則）")
+check(countAutoClean("Base.ProbeGood") == 1,
+    "另一個熱點的稽核**照樣寫出**（釘住個別 pcall：少了它這行會一起消失，實際 "
+        .. countAutoClean("Base.ProbeGood") .. " 行）")
+check(countCleanedNotices("Base.ProbeGood", sentBefore25) == 1,
+    "另一個熱點的玩家通知也照樣發出（實際 "
+        .. countCleanedNotices("Base.ProbeGood", sentBefore25) .. " 則）")
+
+-- 已寫出的熱點不得被重放。這需要**第二次落盤**才觀察得到：flush 只在刪除佇列排空那一刻
+-- 被呼叫，光是空轉幾十輪並不會再進去（佇列空 ⇒ processDeleteQueue 開頭就 return），
+-- 所以要另外製造一次爆發。第三個區塊 (13,14)、另一個 fullType：
+-- 它排空時會再呼叫一次 flush，屆時若舊熱點還留在 cleanNotify 裡就會被重寫一行
+failFullType = nil
+for _ = 1, 25 do
+    putOnFloor(105, 116, 0, makeItem("Base.ProbeTrigger", "dumper"))
+end
+local rounds25 = 0
+for _ = 1, 20 do
+    nowMs = nowMs + 61000
+    runTicks(3000)
+    rounds25 = rounds25 + 1
+    if countAutoClean("Base.ProbeTrigger") > 0 then
+        break
+    end
+end
+check(countAutoClean("Base.ProbeTrigger") == 1,
+    "第二次爆發確實落盤了（活性：沒有這條，下面的『沒重複』可能只是 flush 從未再被呼叫；"
+        .. "用了 " .. rounds25 .. " 輪）")
+check(countAutoClean("Base.ProbeGood") == 1,
+    "第二次落盤沒有重寫第一批的熱點（釘住處理後即從表移除；實際 "
+        .. countAutoClean("Base.ProbeGood") .. " 行）")
+check(countCleanedNotices("Base.ProbeGood", sentBefore25) == 1,
+    "玩家也沒有收到重複通知（實際 "
+        .. countCleanedNotices("Base.ProbeGood", sentBefore25) .. " 則）")
+-- **本輪最核心的設計決定就是這一條**：失敗的熱點也在處理前就被移除，所以它不會被重放。
+-- 少了這條斷言，把 flushCleanNotify 改成「成功才移除、失敗留回表裡」（＝把重試語意從後門
+-- 加回來）不會讓任何斷言轉紅：ProbeGood 成功後照樣被移除，而 ProbeBad 會在這次
+-- ProbeTrigger 的 flush 被重放、且此時注入已關閉所以會成功寫出一行——沒有人在看它。
+-- 這是移除重試後與舊設計唯一的行為差異，必須有斷言
+check(countAutoClean("Base.ProbeBad") == 0,
+    "失敗的熱點也沒有被重放（釘住「失敗項同樣不留回表裡」；實際 "
+        .. countAutoClean("Base.ProbeBad") .. " 行）")
+check(countCleanedNotices("Base.ProbeBad", sentBefore25) == 0,
+    "失敗的熱點也沒有補發通知（實際 "
+        .. countCleanedNotices("Base.ProbeBad", sentBefore25) .. " 則）")
+
+writeLog = realWriteLog
+sandbox.ItemCleanupEnabled = true
+sandbox.MaxFloorItemsPerType = savedChunk25
+sandbox.MaxFloorItemsPerTypeArea = savedArea25
+
+print()
+print("情境二十六：刪除爆發中途被停用，已刪除的部分仍要落盤")
+
+-- 這是落盤的**第二個出口**（resetDisabledState），也是最初促成 flushCleanNotify 存在的
+-- 那個問題：刪除在 removeFloorItem 回 true 那刻就不可逆，但稽核要等佇列排空才寫。管理員
+-- 若在爆發進行中關掉 ItemCleanupEnabled，舊版會在 reset 裡直接丟掉 cleanNotify ⇒ 已經
+-- 刪掉的物品完全沒有 auto_clean 紀錄。
+-- 情境二十四測的是「關閉時不動手」（那時還沒有任何刪除），情境二十五走的是正常 queue-drain
+-- 出口——兩者都不涵蓋這條路徑：把 resetDisabledState 裡的 flushCleanNotify() 刪掉，
+-- 前面 174 條斷言全部照樣綠（實測過）。
+local savedChunk26 = sandbox.MaxFloorItemsPerType
+local savedArea26 = sandbox.MaxFloorItemsPerTypeArea
+sandbox.MaxFloorItemsPerType = 10
+sandbox.MaxFloorItemsPerTypeArea = 2000
+sandbox.ItemCleanupEnabled = true
+
+-- 區塊 (14,13)（x 112..119、y 104..111），在 ScanRadius 16 的 cx/cy 10..14 內。
+-- 這一塊情境十五的 Base.Nails 也用過（它鋪 cx/cy 8..15 全部），但計數是 per-fullType，
+-- 兩者不會交叉觸發——隔離靠的是專屬 fullType，不是區塊獨佔。130 件、上限 10 ⇒ 要刪 120 件，
+-- 每 tick 只刪 ITEMS_PER_TICK（16）⇒ 必定跨 tick，中途才有窗口可以關開關
+for _ = 1, 130 do
+    putOnFloor(113, 105, 0, makeItem("Base.ProbeDisable", "dumper"))
+end
+check(countFloor("Base.ProbeDisable") == 130, "起始：同一塊 130 件（上限 10，要刪 120 件）")
+
+nowMs = nowMs + 61000
+runTicks(3000)   -- 警告輪
+nowMs = nowMs + 61000
+local mid26 = 130
+for _ = 1, 3000 do
+    runTicks(1)
+    mid26 = countFloor("Base.ProbeDisable")
+    if mid26 < 130 then
+        break
+    end
+end
+check(mid26 > 10 and mid26 < 130,
+    "爆發進行中就停手（剩 " .. mid26 .. " 件，介於 130 與上限 10 之間）")
+-- 活性：這一條證明後面的 auto_clean 是**停用轉場**寫的，不是正常排空寫的
+check(countAutoClean("Base.ProbeDisable") == 0,
+    "此刻還沒有任何稽核行（聚合要等佇列排空才寫，所以下面那行只能來自停用轉場）")
+
+sandbox.ItemCleanupEnabled = false
+runTicks(1)
+check(countAutoClean("Base.ProbeDisable") == 1,
+    "中途停用時把已刪除的部分落盤了（釘住 resetDisabledState 裡的 flushCleanNotify；實際 "
+        .. countAutoClean("Base.ProbeDisable") .. " 行）")
+
+-- 停用後不得再刪，也不得再寫第二行
+for _ = 1, 3 do
+    nowMs = nowMs + 61000
+    runTicks(1000)
+end
+check(countFloor("Base.ProbeDisable") == mid26, "停用後一件都沒再刪")
+check(countAutoClean("Base.ProbeDisable") == 1,
+    "也沒有重複寫出（實際 " .. countAutoClean("Base.ProbeDisable") .. " 行）")
+
+sandbox.ItemCleanupEnabled = true
+sandbox.MaxFloorItemsPerType = savedChunk26
+sandbox.MaxFloorItemsPerTypeArea = savedArea26
 print()
 if failures > 0 then
     print(failures .. " 項失敗")

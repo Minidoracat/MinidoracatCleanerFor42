@@ -26,6 +26,11 @@ local lastPeriodicAt = 0
 local cleanNotify = {}
 -- 單調遞增的 tick 序號：用來讓「正在掃的 chunk 每個 tick 重查一次載入狀態」只做一次
 local tickSeq = 0
+-- 上一個 tick 是否處於「清理已停用」：只用來讓 resetDisabledState 在 啟用→停用 的那一個
+-- tick 跑一次。它重建好幾張表，而 Kahlua 的每張表都是獨立的 KahluaTableImpl／LinkedHashMap
+-- （J2SEPlatform.java:35、KahluaTableImpl.java:18），每個 tick 重建等於讓「已經關掉的功能」
+-- 持續製造短命配置。新增的 ItemCleanupEnabled 讓這條路徑從「手改四個整數上限」變成一次點擊
+local cleaningDisabled = false
 
 local function chunkKey(cx, cy, z)
     return tostring(cx) .. "," .. tostring(cy) .. "," .. tostring(z)
@@ -82,6 +87,15 @@ local function makeJob(kind, chunks, players)
         buckets = buckets,
         players = players,
         protectSet = Cleaner.getProtectMatcher(),
+        -- 容器 overlay 表是引擎單例，整輪掃描期間都是同一個物件：Lua 全域 getContainerOverlays()
+        -- 固定回 ContainerOverlays.instance（LuaManager.java:11976-11982），而那是
+        -- public static final（ContainerOverlays.java:20）。所以在 job 上存這個參照
+        -- 8-46 分鐘是安全的，不會拿到過期副本。
+        -- 提上來的收益：repairBrokenContainers 每格都要用它，原本每格取一次＝每 tick 多
+        -- SQUARES_PER_TICK（48）次 Kahlua→Java 往返，現在整份工作只取一次。
+        -- （省下的僅此一項；該函式仍要走完 square:getObjects() 回傳的全部 IsoObject，
+        -- 那是該格的地板／牆／家具全體，IsoGridSquare.java:9635-9637）
+        overlays = getContainerOverlays(),
         highSet = Cleaner.getHighToleranceMatcher(),
         stampsEnabled = Cleaner.getOption("TouchTraceEnabled") ~= false,
     }
@@ -106,11 +120,24 @@ function Cleaner.markDirty(square)
     }
 end
 
-local function buildPeriodicChunks()
-    local chunks = {}
-    local index = {}
-    local players = Cleaner.getActivePlayers()
+-- 週期掃描的區塊清單**漸進建構**，不一次建完。
+--
+-- 為什麼：每位玩家 ScanRadius 80 就是 21×21＝441 個區塊，站在 z≠0 時兩層共 882 個（半徑拉到
+-- 最大 128 時是 2178 個），而每個區塊都要配一張 table。這筆配置量是
+-- #玩家 ×(2×ScanRadius/8+1)²×樓層數——由在線人數與沙盒半徑決定，與地圖大小或已載入
+-- 區塊數無關。一次做完就是把「單一 tick 要配多少」交給沙盒設定決定，所以分批、
+-- 由我們封頂配置速率。注意封的是**速率**：總量仍是上面那個式子，本次沒有改動它
+--
+-- **這是理論風險的封頂，不是實測到的熱點。** GameProfiler 只能量到整個 WorldScanner
+-- callback（Event.java:34,55 的 span 名稱只有 "Lua - OnTick"，不含檔名或函式），無法隔離
+-- 建構本身；改前後的 server 對照也沒量到可證明的差異，尖峰成因至今未定位。
+--
+-- 這裡只記下每位玩家的**範圍描述**，實際的 table 由 stepPeriodicBuild 每 tick 建一批。
+-- 建構期間不掃描：掃描要靠完整的 chunkSet 判斷區塊歸屬（chunkOwnedBy），半成品會讓
+-- 歸屬判定看到不完整的 owners 而誤判。
+local function newPeriodicBuild(players)
     local radius = tonumber(Cleaner.getOption("ScanRadius")) or Cleaner.DEFAULTS.ScanRadius
+    local ranges = {}
     for playerIndex, playerObj in ipairs(players) do
         local minCX = math.floor((playerObj:getX() - radius) / C.CHUNK_SIZE)
         local maxCX = math.floor((playerObj:getX() + radius) / C.CHUNK_SIZE)
@@ -121,40 +148,76 @@ local function buildPeriodicChunks()
         if playerZ ~= 0 then
             levels[2] = playerZ
         end
-        for _, z in ipairs(levels) do
-            for cy = minCY, maxCY do
-                for cx = minCX, maxCX do
-                    local key = chunkKey(cx, cy, z)
-                    local chunk = index[key]
-                    if not chunk then
-                        chunk = { cx = cx, cy = cy, z = z, owners = {} }
-                        index[key] = chunk
-                        chunks[#chunks + 1] = chunk
-                    end
-                    -- 區塊仍去重（玩家聚集時不重複掃描），但記下它屬於哪幾位玩家的區域，
-                    -- 供 regionCount 分開累計。同一玩家同一 key 只會走到這裡一次（z 不重複）
-                    chunk.owners[#chunk.owners + 1] = playerIndex
-                end
+        ranges[#ranges + 1] = {
+            owner = playerIndex,
+            minCX = minCX,
+            minCY = minCY,
+            width = maxCX - minCX + 1,
+            height = maxCY - minCY + 1,
+            levels = levels,
+        }
+    end
+    -- linear 是「當前玩家範圍內的第幾格」，用單一整數就能跨 tick 續傳——Kahlua 沒有 next()，
+    -- pairs 的迭代狀態帶不過 tick 邊界。
+    -- 去重不另建表：job.chunkSet 本來就是 key→chunk 映射（makeJob 以空 chunks 初始化，
+    -- 故建構開始時是空的），拿它當去重表語意完全相同，省下一張與區塊數同階的表
+    return { ranges = ranges, rangePos = 1, linear = 0 }
+end
+
+-- 建一批區塊；回傳是否已全部建完。
+-- 區塊仍去重（玩家聚集時不重複掃描），但記下它屬於哪幾位玩家的區域，供 regionCount 分開累計。
+-- 同一玩家同一 key 只會被走到一次（線性展開對每個 (玩家, z, cy, cx) 各一次，z 不重複）
+local function stepPeriodicBuild(job, budget)
+    local build = job.build
+    local built = 0
+    while built < budget do
+        local range = build.ranges[build.rangePos]
+        if not range then
+            job.build = nil
+            return true
+        end
+        local perLevel = range.width * range.height
+        local total = perLevel * #range.levels
+        if build.linear >= total then
+            build.rangePos = build.rangePos + 1
+            build.linear = 0
+        else
+            local offset = build.linear
+            local levelIndex = math.floor(offset / perLevel) + 1
+            local withinLevel = offset % perLevel
+            local cx = range.minCX + (withinLevel % range.width)
+            local cy = range.minCY + math.floor(withinLevel / range.width)
+            local z = range.levels[levelIndex]
+            local key = chunkKey(cx, cy, z)
+            local chunk = job.chunkSet[key]
+            if not chunk then
+                chunk = { cx = cx, cy = cy, z = z, owners = {} }
+                job.chunks[#job.chunks + 1] = chunk
+                job.chunkSet[key] = chunk
             end
+            chunk.owners[#chunk.owners + 1] = range.owner
+            build.linear = build.linear + 1
+            built = built + 1
         end
     end
-    -- 不排序：巢狀迴圈產生的順序本來就是空間連續且確定的；且對「已接近排序」的大陣列
-    -- 呼叫 Kahlua table.sort 會退化成 O(n) 遞迴深度而 stack overflow（見 Core.sortSafe 註解）
-    return chunks, players
+    return false
 end
 
 local function queuePeriodicScan(now)
     if periodicQueued then
         return
     end
-    local chunks, players = buildPeriodicChunks()
-    if #chunks == 0 then
+    local players = Cleaner.getActivePlayers()
+    if #players == 0 then
         -- 無人在線時不會有 periodic job，也就不會跑到 finishJob 的 area prune，
         -- 記錄會殘留到下一批玩家上線；在這裡直接清空
         areaWarned = {}
         return
     end
-    scanQueue[#scanQueue + 1] = makeJob("periodic", chunks, players)
+    -- chunks 先給空表，由 stepPeriodicBuild 每 tick 填一批（見那裡的說明）
+    local job = makeJob("periodic", {}, players)
+    job.build = newPeriodicBuild(players)
+    scanQueue[#scanQueue + 1] = job
     periodicQueued = true
     lastPeriodicAt = now
 end
@@ -311,7 +374,7 @@ end
 
 local function repairBrokenContainers(job, square)
     local objects = square:getObjects()
-    local overlays = getContainerOverlays()
+    local overlays = job.overlays
     for index = 0, objects:size() - 1 do
         local object = objects:get(index)
         if object and object:getOverlaySprite() and overlays:hasOverlays(object)
@@ -806,7 +869,7 @@ local function finishJob(job, now)
     -- 真，因為區域通常含載不到的區塊——掃描盒（ScanRadius 80 → 21×21 區塊，168 格寬）大於
     -- 單機／自架主機的載入視窗（chunkGridWidth 13~19 → 104~152 格，IsoChunkMap.java:60,107-120；
     -- dedicated server 則按 64×64 的 ServerCell 整塊載入，ServerMap.java:225,260-269，覆蓋範圍
-    -- 未必小於掃描盒），而玩家站在 z≠0 時 buildPeriodicChunks 會把整層都排進來，露天區塊的
+    -- 未必小於掃描盒），而玩家站在 z≠0 時 newPeriodicBuild 會把整層都排進來，露天區塊的
     -- min/maxLevel 是 int 預設 0（IsoChunk.java:146-147）且只在真的放進該層 square 時才擴展
     -- （:3084），故整層一律回 null（:3155-3159）。從未貢獻過計數的區塊不會進 record.chunks，
     -- 判定因此只對真正的「來源消失」成立。
@@ -859,6 +922,15 @@ local function consumeScanQueue(now)
         if not activeJob then
             activeJob = table.remove(scanQueue, 1)
             if not activeJob then
+                return
+            end
+        end
+
+        -- 週期掃描的區塊清單還沒建完：這個 tick 只建一批就收工。建構期間不掃描，因為
+        -- chunkOwnedBy 要看完整的 owners（半成品會誤判歸屬）；441~882 個區塊在
+        -- CHUNKS_PER_TICK=128 之下是 4~7 個 tick
+        if activeJob.build then
+            if not stepPeriodicBuild(activeJob, C.CHUNKS_PER_TICK) then
                 return
             end
         end
@@ -1020,6 +1092,73 @@ local function compactDeleteQueue()
     end
     deleteQueue = compacted
     deleteHead = 1
+end
+
+-- 把累積的清理聚合落盤：每熱點寫一行 auto_clean、發一則通知。
+--
+-- 抽成函式是因為有兩個出口：正常出口是刪除佇列排空（processDeleteQueue 尾端），
+-- 另一個是清理進行中被停用（resetDisabledState）。刪除在 removeFloorItem 回 true 那刻
+-- 就已不可逆，聚合卻要等佇列排空才輸出（限速 16 件/tick，超過就跨 tick）；少了這裡
+-- 統一落盤，管理員在爆發中途關掉 ItemCleanupEnabled 就會讓已刪除的物品完全沒有
+-- auto_clean 紀錄也沒有通知——而新增的布林總開關讓那個時機從「手改四個整數」變成一次點擊。
+--
+-- **每個熱點先從表裡移除、再各自用 pcall 處理**，理由是這裡不做重試：
+-- ① 寫檔失敗根本傳不到 Lua——writeLog 走 ZLogger.write，它把所有 Exception catch 起來
+--    只印 DebugLog 就正常返回（ZLogger.java:48-54；建檔失敗也在 constructor 內吞掉）。
+--    所以「磁碟滿／權限不足」這類真正該重試的情況，這裡連知道都不會知道。
+-- ② 會傳到這裡的只剩 Lua 層例外（例如通知路徑上的 nil deref）。對那種情況重放整張表是
+--    有害的：Event.trigger 對每個 callback 逐次 catch 後照常註冊（Event.java:52-59），
+--    下一個 tick 還是會進來，於是「每 tick 重試」＝每 tick 拋一份堆疊；而已經寫成功的
+--    熱點會重複寫一行 log、重複發一則玩家通知，若失敗與重試之間又累加了新的刪除，
+--    重放那行的 removed 還會比前一行大，同一熱點的數字因此不可相加。
+-- 個別 pcall 是必要的：少了它，第一個熱點拋錯就會帶著**其餘熱點的稽核一起消失**
+-- （它們還留在表裡，但佇列已重設、下一個 tick 走不到這裡）。
+-- pcall 攔下之後**不重拋**：Kahlua 在拋出點就已經記錄了完整的 Lua 位置與堆疊
+-- （KahluaThread.java:894-897 的 luaMainloop catch：ExceptionLogger.logException ＋
+-- debugException ＋ doStacktraceProper），所以錯誤本來就看得到，不是靜默吞掉。
+-- 再 `error()` 一次只會多印一份指向這裡、而非指向真正拋錯點的堆疊：`error(msg)` 建的是
+-- 單參數 KahluaException（source=nil、lineNumber=-1，KahluaException.java:12-16），
+-- 原始位置反而遺失；而 pcall 其實回傳四個值（false、訊息、traceback、Throwable，
+-- KahluaThread.java:1458-1464），只接前兩個就把 traceback 丟掉了。
+-- 另外別把「外層還有 Event.trigger 的 try/catch」當成理由：那條路徑走
+-- LuaCaller.pcallvoid → KahluaThread.pcallvoid → pcall(int)，而 pcall(int) 對
+-- KahluaException 一律 catch 後回傳四個值、不重拋，所以 Event.java:56-58 的
+-- logException 對 Lua 層 error 永遠不會被執行
+local function emitCleanEntry(notify)
+    local dropperDetails = {}
+    for dropper, count in pairs(notify.droppers) do
+        dropperDetails[#dropperDetails + 1] = dropper .. ":" .. count
+    end
+    Cleaner.sortSafe(dropperDetails, function(a, b) return a < b end)
+    Cleaner.log(
+        "auto_clean",
+        "system",
+        notify.x,
+        notify.y,
+        notify.z,
+        "fullType=" .. Cleaner.sanitize(notify.detail)
+            .. " removed=" .. notify.count
+            .. " dropper=" .. table.concat(dropperDetails, ",")
+    )
+    Cleaner.notifyCleaned("items", notify.detail, notify.count, notify.x, notify.y, notify.z)
+end
+
+local function flushCleanNotify()
+    -- 先蒐 key 再逐個處理：不在 pairs 迭代中改動同一張表（Kahlua 的 table 底層是
+    -- LinkedHashMap，J2SEPlatform.java:35、KahluaTableImpl.java:18）
+    local keys = {}
+    for key in pairs(cleanNotify) do
+        keys[#keys + 1] = key
+    end
+    for _, key in ipairs(keys) do
+        local notify = cleanNotify[key]
+        if notify then
+            -- 先移除再處理：失敗的熱點也不留回表裡。留回去就是把上面否決掉的重試語意
+            -- 從後門加回來——下一次 flush 會把它重放，而它上一次可能已經寫成功了一半
+            cleanNotify[key] = nil
+            pcall(emitCleanEntry, notify)
+        end
+    end
 end
 
 local function processDeleteQueue()
@@ -1222,29 +1361,18 @@ local function processDeleteQueue()
         deleteQueue = {}
         deleteHead = 1
         -- 佇列排空＝一次清理爆發結束：每熱點只寫一行 log、發一則通知
-        for _, notify in pairs(cleanNotify) do
-            local dropperDetails = {}
-            for dropper, count in pairs(notify.droppers) do
-                dropperDetails[#dropperDetails + 1] = dropper .. ":" .. count
-            end
-            Cleaner.sortSafe(dropperDetails, function(a, b) return a < b end)
-            Cleaner.log(
-                "auto_clean",
-                "system",
-                notify.x,
-                notify.y,
-                notify.z,
-                "fullType=" .. Cleaner.sanitize(notify.detail)
-                    .. " removed=" .. notify.count
-                    .. " dropper=" .. table.concat(dropperDetails, ",")
-            )
-            Cleaner.notifyCleaned("items", notify.detail, notify.count, notify.x, notify.y, notify.z)
-        end
-        cleanNotify = {}
+        flushCleanNotify()
     end
 end
 
 local function resetDisabledState()
+    -- 落盤放最前面，是為了讓「已刪除但還沒寫稽核」的那批資料在世界狀態被清掉之前先輸出。
+    -- 它現在**不會**把例外往外傳（每個熱點各自 pcall，見 flushCleanNotify），所以下面的
+    -- 狀態重設一定會執行、這個函式一個 tick 就做完。
+    -- 注意落盤是 at-most-once：flushCleanNotify 在處理前就把每個熱點從 cleanNotify 移除，
+    -- 失敗的那一個不會重試也不會重放，所以「下一個 tick 重做」只適用於下面的狀態重設，
+    -- 不適用於稽核。這是刻意的取捨，理由在 flushCleanNotify 的註解
+    flushCleanNotify()
     scanQueue = {}
     activeJob = nil
     dirtyChunks = {}
@@ -1255,7 +1383,6 @@ local function resetDisabledState()
     deleteHead = 1
     pendingDeleteIDs = {}
     periodicQueued = false
-    cleanNotify = {}
 end
 
 local function onTick()
@@ -1266,9 +1393,19 @@ local function onTick()
     -- 正常運作時恆為 0，於是每個 chunk 只在第一次被碰到時查一次載入狀態，跨 tick 重查整條失效
     tickSeq = tickSeq + 1
     if Cleaner.isFloorCleaningDisabled() then
-        resetDisabledState()
+        -- 只在 啟用→停用 那一個 tick 清理狀態（理由見 cleaningDisabled 宣告處）。
+        -- 旗標在 reset 返回之後才設。目前的 resetDisabledState 已經不會拋錯（落盤逐項
+        -- pcall），所以這個順序在現況下沒有可觀測差異——留著是因為它是唯一安全的順序：
+        -- 一旦日後有人在 reset 裡加了會拋錯的步驟，先設旗標就會讓那次失敗永久鎖住重做
+        -- （旗標已設、狀態留半套、沒有任何後續 tick 會回來補），而「每 tick 無條件重做」
+        -- 這個原本的自癒性正是加旗標時被換掉的東西
+        if not cleaningDisabled then
+            resetDisabledState()
+            cleaningDisabled = true
+        end
         return
     end
+    cleaningDisabled = false
 
     promoteDirtyChunks(now)
     local interval = (tonumber(Cleaner.getOption("ScanIntervalSeconds")) or Cleaner.DEFAULTS.ScanIntervalSeconds) * 1000

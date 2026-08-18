@@ -27,7 +27,7 @@ Every cleanup is [b]warned first[/b] and only executed if the area is still over
 [*] [b]Cleanup log file[/b]: every warning and cleanup is written to its own log with timestamp, item/species, count, coordinates and the dropper — ready for server admin audits (path below)
 [*] [b]List builder[/b]: an in-game search tool — look up items and animal groups by keyword ([u]localized name or English ID both work[/u]), pick them, copy the exact values and paste them into the sandbox options. No more transcribing item IDs by hand
 [*] [b]Batch animal spawner[/b]: admin testing tool, right-click to spawn 10/25/50/100 of a chosen animal at once. [u]Hidden by default[/u] - enable it in the sandbox options (or launch the game with -debug)
-[*] [b]Sandbox options[/b]: 18 settings split across three pages (General / Items / Animals), each with an explanation
+[*] [b]Sandbox options[/b]: 20 settings split across three pages (General / Items / Animals), each with an explanation; items and animals each get a [b]master on/off switch[/b] so you never have to zero out every limit by hand
 [*] [b]Singleplayer & multiplayer[/b]: in MP every deletion and cleanup is validated and executed server-side, so modified clients can't abuse it
 [*] [b]Languages[/b]: English / 繁體中文 / 简体中文 / 日本語
 [/list]

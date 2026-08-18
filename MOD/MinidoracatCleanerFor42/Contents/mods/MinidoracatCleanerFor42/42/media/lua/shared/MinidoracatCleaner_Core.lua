@@ -15,6 +15,9 @@ Cleaner.KEY_MOVED_AT = "MIC42_lastMovedAt"
 
 Cleaner.DEFAULTS = {
     AllowManualDelete = true,
+    -- 兩個分類各自的總開關（預設開）。有了它們，要停用整套清理不必把上限一個個改成 0
+    ItemCleanupEnabled = true,
+    AnimalCleanupEnabled = true,
     MaxFloorItemsPerType = 100,
     MaxFloorItemsPerTypeArea = 400,
     HighToleranceMaxPerType = 300,
@@ -37,6 +40,16 @@ Cleaner.DEFAULTS = {
 Cleaner.CONSTANTS = {
     SQUARES_PER_TICK = 48,
     ITEMS_PER_TICK = 16,
+    -- 週期掃描建立區塊清單時，每個 tick 建幾個。每位玩家 ScanRadius 80 就是 21×21＝441 個
+    -- 區塊、站在 z≠0 時兩層共 882 個（半徑拉到最大 128 時是 2178 個），而每個區塊都要配一張
+    -- table——Kahlua 的每張表都是獨立的 KahluaTableImpl／LinkedHashMap。分批建構把這筆固定
+    -- 數量的配置攤到多個 tick，封頂的是「單一 tick 的配置速率」。
+    -- **這是理論風險的封頂，不是實測到的熱點**：GameProfiler 只能量到整個 WorldScanner
+    -- callback（Event.java:34,55 的 span 名稱只有 "Lua - OnTick"，不含檔名或函式），
+    -- 無法隔離建構本身的耗時；改前後的對照也沒量到可證明的差異（尖峰成因至今未定位）。
+    -- 留著它的理由是配置量由沙盒半徑與在線人數決定（#玩家 ×(2×ScanRadius/8+1)²×樓層數，
+    -- 與地圖大小無關），而單一 tick 要配多少應該由我們決定、不是由設定值決定
+    CHUNKS_PER_TICK = 128,
     -- area victim 刪除前重數「來源區塊」時的區塊額度，同時是**排入時**來源集的截斷長度。
     -- 每塊要走 64 格，取 32 即 2048 格/tick 的上限（掃描器本身是 SQUARES_PER_TICK＝48
     -- 格/tick，但 recount 是突發而非持續，正式服 10 天只觸發過 7 次 area 清理）。
@@ -566,7 +579,14 @@ end
 
 -- normal 與 high 是各自獨立的兩組上限，任一為正就仍需掃描；四個全為 0 才是「完全關閉」。
 -- （只看 normal 兩項會讓「normal=0、high>0」的設定意外整個停擺）
+--
+-- ItemCleanupEnabled 是這個分類的總開關，優先於所有上限：關掉它就不必再把四個上限逐一改成 0。
+-- 寫 `== false` 只是把「唯有明確關閉才停用」寫清楚，與本檔既有的 `~= false` 同一風格；
+-- getOption 對沙盒缺值會回 DEFAULTS（見上方定義），所以這裡拿不到 nil，`not` 也會等價
 function Cleaner.isFloorCleaningDisabled()
+    if Cleaner.getOption("ItemCleanupEnabled") == false then
+        return true
+    end
     local names = {
         "MaxFloorItemsPerType",
         "MaxFloorItemsPerTypeArea",

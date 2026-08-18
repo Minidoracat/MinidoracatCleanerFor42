@@ -39,8 +39,16 @@ JARGON_PATTERNS = [
     (re.compile(r"\b\w+\.(?:java|lua)\b"), "原始檔名"),
     (re.compile(r"\b[a-z][A-Za-z0-9]*\s*\("), "函式呼叫"),
     (re.compile(r"\b(?:Kahlua|BaseLib|TableLib|Lua|API|callback|hook|packet|thread|"
-                r"cache|index|null|nil|boolean|table|string)\b"), "引擎／程式術語"),
+                r"cache|index|null|nil|boolean|table|string|tick|chunk|overlay|pcall|"
+                r"metatable|userdata|sandbox)\b", re.IGNORECASE), "引擎／程式術語"),
     (re.compile(r":\d{2,4}\b"), "行號引用"),
+    # 數學／演算法名詞：玩家層 bullet 出現這些幾乎一定該改寫成白話。
+    # 0.3.0 踩過——修正理由是「玩家看不懂切比雪夫」，卻在公開更新說明裡把它
+    # 連中英日三種寫法全列了一遍，等於自相矛盾。
+    (re.compile(r"切比雪夫|曼哈頓|曼哈顿|歐幾里[得德]|欧几里[得德]|"
+                r"chebyshev|manhattan|euclidean|チェビシェフ|マンハッタン|"
+                r"雜湊|哈希|啟發式|启发式|heuristic|L∞|遞迴|递归|recursion",
+                re.IGNORECASE), "數學／演算法名詞"),
 ]
 
 LEAK_PATTERNS = [

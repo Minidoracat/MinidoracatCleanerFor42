@@ -32,6 +32,18 @@ option MinidoracatCleanerFor42.DebugMenuEnabled
 
 /* ============ 物品清理 ============ */
 
+/* 總開關放各分頁最前面（沙盒 UI 的順序就是本檔的順序）：要停用整套物品清理不必再把四個
+   上限都改成 0。關閉後掃描本身也不再排程，所以連帶停掉容器修復——那條自癒邏輯掛在
+   週期掃描上（見 WorldScanner.repairBrokenContainers），tooltip 有寫明這件事 */
+
+option MinidoracatCleanerFor42.ItemCleanupEnabled
+{
+    type = boolean,
+    default = true,
+    page = MinidoracatCleanerItems,
+    translation = MinidoracatCleanerFor42_ItemCleanupEnabled,
+}
+
 option MinidoracatCleanerFor42.MaxFloorItemsPerType
 {
     type = integer,
@@ -112,6 +124,14 @@ option MinidoracatCleanerFor42.ProtectList
 }
 
 /* ============ 動物清理 ============ */
+
+option MinidoracatCleanerFor42.AnimalCleanupEnabled
+{
+    type = boolean,
+    default = true,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalCleanupEnabled,
+}
 
 option MinidoracatCleanerFor42.MaxAnimalsPerGroup
 {

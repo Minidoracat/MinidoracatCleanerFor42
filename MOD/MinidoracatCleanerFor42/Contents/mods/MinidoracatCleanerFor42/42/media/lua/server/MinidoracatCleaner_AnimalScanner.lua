@@ -167,6 +167,13 @@ local function hasAnyAnimalLimit(defaultLimit, zoneLimit, overrides, zoneOverrid
 end
 
 local function runAnimalScan(now)
+    -- 分類總開關，優先於所有上限：關掉就不必把散養／圈養／逐群組覆寫逐一改成 0。
+    -- 放在這裡而不是 onTick 開頭，是為了沿用下面同一條「清掉警告記錄再返回」的收尾——
+    -- 關閉時舊記錄不該留著，否則之後重新開啟會沿用過期記錄直接清理、不再給玩家警告
+    if Cleaner.getOption("AnimalCleanupEnabled") == false then
+        warned = {}
+        return
+    end
     local defaultLimit = tonumber(Cleaner.getOption("MaxAnimalsPerGroup")) or Cleaner.DEFAULTS.MaxAnimalsPerGroup
     -- 圈養獨立上限：0＝不清理圈養（完整保護，預設）
     local zoneLimit = tonumber(Cleaner.getOption("MaxZoneAnimalsPerGroup")) or 0
