@@ -12,15 +12,34 @@ local warned = {}
 -- 區域(area)超標的警告狀態，與 chunk 分開：key = onlineID:username|bucket|fullType，
 -- 一位玩家、一個桶、一種物品只發一則警告（不再是區域內每個含該物品的區塊各發一則）
 local areaWarned = {}
+-- items_area_unprovable 的節流：key = username（基數有上限＝玩家數，ServerOptions.java:30 的
+-- MAX_PLAYERS 是 254，但那只限制**同時在線**）。只綁在 areaWarned 記錄上不夠——玩家可以同時製造多種稀疏超標型別，
+-- 也可以走到空區讓記錄被回收、再回來重建，兩條路都能繞過「每筆記錄一次」而洪水寫檔。
+-- 表本身在寫入時會清掉過了節流間隔的 key（username 基數不由在線人數封頂）
+-- （ZLogger 超過 10MB 是原檔截斷而非輪替，會沖掉同一份 log 裡的真證據）
+local unprovableLogAt = {}
 local deleteQueue = {}
 local deleteHead = 1
 local pendingDeleteIDs = {}
 local periodicQueued = false
 local lastPeriodicAt = 0
 local cleanNotify = {}
+-- 單調遞增的 tick 序號：用來讓「正在掃的 chunk 每個 tick 重查一次載入狀態」只做一次
+local tickSeq = 0
 
 local function chunkKey(cx, cy, z)
     return tostring(cx) .. "," .. tostring(cy) .. "," .. tostring(z)
+end
+
+-- chunkKey 的反解析，供 processDeleteQueue 重數 area 範圍時取回座標（那時 job 已結束、
+-- 拿不到 chunk 物件）。存 key 字串而不是每個來源各配一個座標 table，是為了不讓
+-- areaChunks 的配置量隨來源區塊數放大（AGENTS.md：小 table 要有上限）
+local function parseChunkKey(key)
+    local cx, cy, cz = string.match(key, "^(-?%d+),(-?%d+),(-?%d+)$")
+    if not cx then
+        return nil
+    end
+    return tonumber(cx), tonumber(cy), tonumber(cz)
 end
 
 -- 兩個計數桶，各自比對各自的上限：
@@ -57,6 +76,9 @@ local function makeJob(kind, chunks, players)
         chunkSet = chunkSet,
         chunkIndex = 1,
         squareIndex = 0,
+        -- 候選配置的兜底額度（per-type 上限見 addCandidate）。掛在 job 上是刻意的：它要涵蓋
+        -- 整份掃描工作，而不是每個 tick 重置——重置的話「每 tick 都能再配 20000 筆」等於沒有上限
+        candidateBudget = C.CANDIDATES_PER_JOB,
         buckets = buckets,
         players = players,
         protectSet = Cleaner.getProtectMatcher(),
@@ -151,7 +173,22 @@ local function promoteDirtyChunks(now)
     end
 end
 
-local function addCandidate(bucket, key, fullType, item, square)
+-- 每個 (chunk, fullType) 的候選清單是**依 item ID 降冪的 bounded top-N**，不是無界 list：
+-- 每個安全物品都要配一筆 7 欄 table，而 Kahlua 的每張表都是獨立的 KahluaTableImpl／
+-- LinkedHashMap（本專案實測 10 萬筆三欄 record 約 35 MiB），所以「每物件一張表」必須有上限，
+-- 且上限要綁我們自己的處理量、不能綁世界內容量（AGENTS.md 明文）。走訪額度封頂的是 CPU，
+-- 沒有這道的話單格堆十萬件仍會在記憶體上炸開。
+--
+-- 為什麼是 per (chunk, fullType) 而不是單一個全域額度：addCandidate 對**每一件**安全地板物品
+-- 都會呼叫，不管那一塊有沒有超標。共用一份額度的話，沿路的零星垃圾會先把它吃光，而掃描順序
+-- 是固定的 chunkIndex/squareIndex 遞增 ⇒ 每一輪都在同一個位置耗盡 ⇒ 掃描盒後段的熱點永遠
+-- 拿不到候選（還會被記成 items_protected_over 而誤導管理員說「全部受保護」）。
+--
+-- 為什麼是 top-N by item ID 而不是先到先得：先到先得留下的是**最舊**的那些，跟「最新的堆先刪」
+-- 政策正好相反（遞增的 item ID 近似落地順序；worldObj.dropTime 是 instance field，Kahlua 不暴露）。
+-- 清單維持降冪，所以尾端就是目前最舊的一筆，滿了之後只有更新的才值得換掉它——換的時候覆寫
+-- 欄位、不配新 table
+local function addCandidate(job, bucket, key, fullType, item, square)
     local byType = bucket.candidates[key]
     if not byType then
         byType = {}
@@ -162,16 +199,71 @@ local function addCandidate(bucket, key, fullType, item, square)
         list = {}
         byType[fullType] = list
     end
-    -- 用遞增的 item ID 近似「較晚取得＝較晚落地」；worldObj.dropTime 是 instance field，Kahlua 不暴露（讀不到）
-    list[#list + 1] = {
-        id = item:getID(),
-        fullType = fullType,
-        x = square:getX(),
-        y = square:getY(),
-        z = square:getZ(),
-        cx = math.floor(square:getX() / C.CHUNK_SIZE),
-        cy = math.floor(square:getY() / C.CHUNK_SIZE),
-    }
+    -- 這份清單是「保留 item ID 最大的 N 筆」的 **min-heap**（root 是目前最舊的一筆），不是
+    -- 有序陣列：掉落 ID 幾乎總是遞增，維持降冪的話每來一件都要從榜尾搬到榜首，單筆成本
+    -- O(N)；單 tick 最多走訪 SCAN_ITEM_VISITS_PER_TICK 件，於是 512×512≈26 萬次 table 指派，
+    -- CPU 額度就不再代表真實成本了。heap 的插入／替換是 O(log N)≈9。
+    -- 不需要維持完整順序，因為 selectCandidates 之後會依「整堆整堆刪」政策重新排一次
+    local id = item:getID()
+    local n = #list
+    local slot
+    if n >= C.CANDIDATES_PER_TYPE then
+        -- 滿了：只有比目前最舊的那筆更新才值得留下
+        if id <= list[1].id then
+            return
+        end
+        slot = list[1]
+    elseif job.candidateBudget <= 0 then
+        -- job 層的兜底上限：每組各有自己的額度，總量仍會隨「超標組合數」成長，這道是純 DoS 防線
+        return
+    else
+        job.candidateBudget = job.candidateBudget - 1
+        slot = {}
+        n = n + 1
+        list[n] = slot
+    end
+    slot.id = id
+    slot.fullType = fullType
+    slot.x = square:getX()
+    slot.y = square:getY()
+    slot.z = square:getZ()
+    slot.cx = math.floor(square:getX() / C.CHUNK_SIZE)
+    slot.cy = math.floor(square:getY() / C.CHUNK_SIZE)
+    if slot == list[1] and n > 1 then
+        -- 覆寫了 root：往下沉到正確位置
+        local i = 1
+        while true do
+            local left, right = i * 2, i * 2 + 1
+            local small = i
+            if left <= n and list[left].id < list[small].id then
+                small = left
+            end
+            if right <= n and list[right].id < list[small].id then
+                small = right
+            end
+            if small == i then
+                break
+            end
+            list[i], list[small] = list[small], list[i]
+            i = small
+        end
+    else
+        -- 新加在尾端：往上浮到正確位置。
+        -- 注意這段在實務上幾乎是 no-op：item ID 由引擎遞增發放，同一格的掉落順序就是 ID 順序，
+        -- 新元素本來就該落在葉節點。停用它在煙霧測試裡也不會有任何斷言變紅（fixture 的 ID
+        -- 必定遞增），所以這不是「缺測試」而是「該分支在遞增輸入下不可觸發」。
+        -- 留著是因為 heap 的正確性不該依賴輸入順序——candidates 的來源若哪天不只掃描一條路，
+        -- 沒有它 root 就不再是最舊的那筆，替換決策會失準
+        local i = n
+        while i > 1 do
+            local parent = math.floor(i / 2)
+            if list[parent].id <= list[i].id then
+                break
+            end
+            list[parent], list[i] = list[i], list[parent]
+            i = parent
+        end
+    end
 end
 
 -- 修復被「非原版路徑」刪空的容器——本 MOD 0.2.6 以前的刪除正是這樣。
@@ -243,11 +335,29 @@ local function repairBrokenContainers(job, square)
     end
 end
 
-local function scanSquare(job, chunk, square)
+-- visits 是**單 tick** 的地板物件走訪額度（`{ left = n }`，由 consumeScanQueue 每 tick 重建），
+-- 不是每格的上限。回傳這一格是否已走完：沒走完時把格內位置記在 job.itemOffset，下一個 tick
+-- 從那裡接著走（呼叫端不前進 squareIndex），所以計數仍然精確、只是攤到多個 tick。
+-- 為什麼不能只靠 SQUARES_PER_TICK：那只封頂格數，單一格子的 worldObjects 沒有容量上限
+-- （IsoGridSquare.java:319，掉落時直接 append、getter 原樣回傳 :9947-9949），十萬件堆在一格
+-- 時「每格完整走一遍」還是一個 tick 全走完。
+-- 為什麼不改成「觸頂就略過該格剩下的」：那會讓那些物品永遠不被計數（每輪都在同一處觸頂），
+-- 清理對單格大量堆積完全失效——而那正是最需要清理的形狀
+local function scanSquare(job, chunk, square, visits)
     repairBrokenContainers(job, square)
     local key = chunkKey(chunk.cx, chunk.cy, chunk.z)
     local worldObjects = square:getWorldObjects()
-    for index = 0, worldObjects:size() - 1 do
+    local total = worldObjects:size()
+    local start = job.itemOffset or 0
+    local limit = total - start
+    if limit > visits.left then
+        limit = visits.left
+    end
+    if limit < 0 then
+        limit = 0
+    end
+    visits.left = visits.left - limit
+    for index = start, start + limit - 1 do
         local worldObj = worldObjects:get(index)
         local item = worldObj and worldObj:getItem()
         local fullType = item and item:getFullType()
@@ -270,10 +380,16 @@ local function scanSquare(job, chunk, square)
                 end
             end
             if Cleaner.isSafeFloorCandidate(item, worldObj, job.protectSet) then
-                addCandidate(bucket, key, fullType, item, square)
+                addCandidate(job, bucket, key, fullType, item, square)
             end
         end
     end
+    if start + limit < total then
+        job.itemOffset = start + limit
+        return false
+    end
+    job.itemOffset = nil
+    return true
 end
 
 local function warnInterval()
@@ -308,7 +424,7 @@ end
 local function ensureAreaWarning(key, playerObj, fullType, count, limit, now)
     local record = areaWarned[key]
     if not record then
-        record = { time = now }
+        record = { time = now, lastSeen = now }
         areaWarned[key] = record
         local x, y, z = playerObj:getX(), playerObj:getY(), playerObj:getZ()
         Cleaner.warnPlayerOnly(playerObj, "items", fullType, count, limit)
@@ -319,21 +435,33 @@ local function ensureAreaWarning(key, playerObj, fullType, count, limit, now)
     return now - record.time >= warnInterval()
 end
 
-local function queueVictim(record, scope, limit, bucketName)
+local function queueVictim(record, scope, bucketName, areaChunks)
     if pendingDeleteIDs[record.id] then
         return false
     end
+    -- 佇列自己要有天花板：掃描每 tick 最多產生 SCAN_ITEM_VISITS_PER_TICK 個候選，而
+    -- processDeleteQueue 每 tick 只消化 ITEMS_PER_TICK 個——生產可以比消化快 32 倍
+    -- （多個 dirty job 連續進來時更明顯），沒有上限的話 deleteQueue 與 pendingDeleteIDs 會
+    -- 一起無界成長。觸頂就停止排入，沒排到的下一輪重新掃到時再排
+    if #deleteQueue - deleteHead + 1 >= C.MAX_PENDING_DELETES then
+        return false
+    end
     pendingDeleteIDs[record.id] = true
-    -- 記錄觸發 scope、當時閾值與所屬桶，供 processDeleteQueue 刪除前 live recount
-    -- （避免用過期數量刪到低於閾值；recount 必須只數同一個桶的物品）
+    -- 記錄觸發 scope 與所屬桶，供 processDeleteQueue 刪除前 live recount（避免用過期數量刪到
+    -- 低於閾值；recount 必須只數同一個桶的物品）。**不記當時的閾值**：管理員可在執行期改
+    -- sandbox，刪除前要讀當前值，記下來的舊值只會讓我們照過期政策刪東西
     record.scope = scope
-    record.limit = limit
     record.bucket = bucketName
+    -- area victim 另外帶上 recount 要重數的來源區塊集：area 的閾值是跨區塊的總數，只重數
+    -- victim 自己那一塊不等於同一個 scope。這個集合在排入時已依計數降冪截到
+    -- AREA_RECOUNT_CHUNKS_PER_TICK 塊，所以單件走訪量天生有界。
+    -- chunk victim 用不到（liveChunkCount 就是數自己那塊），維持 nil
+    record.areaChunks = areaChunks
     deleteQueue[#deleteQueue + 1] = record
     return true
 end
 
-local function selectCandidates(list, needed, selected, scope, limit, bucketName)
+local function selectCandidates(list, needed, selected, scope, bucketName, areaChunks)
     if not list or needed <= 0 then
         return
     end
@@ -375,7 +503,7 @@ local function selectCandidates(list, needed, selected, scope, limit, bucketName
     for _, record in ipairs(list) do
         if not selected[record.id] then
             selected[record.id] = true
-            if queueVictim(record, scope, limit, bucketName) then
+            if queueVictim(record, scope, bucketName, areaChunks) then
                 planned = planned + 1
                 if planned >= needed then
                     return
@@ -402,15 +530,38 @@ local function chunkOwnedBy(chunk, ownerIndex)
     return false
 end
 
--- 本次掃到的區塊依 reasons 判定去留（沒列進去＝已回到上限內）；沒掃到的區塊——玩家已離開、
--- 之後可能永遠不會再被掃到——則用閒置年齡回收，避免記錄隨探索範圍無界成長
+-- 本次**確實完整觀測到**的區塊依 reasons 判定去留（沒列進去＝已回到上限內）；沒觀測到的
+-- 區塊——玩家已離開、區塊已卸載、之後可能永遠不會再被掃到——則用閒置年齡回收，避免記錄
+-- 隨探索範圍無界成長。
+--
+-- 「在 chunkSet 內」不等於「數過了」：job.chunks 是建立當下依玩家位置算出的快照，而一輪要
+-- 8-46 分鐘（正式服實測）才輪到其中某個 chunk，掃到時玩家可能早已走遠使區塊卸載，
+-- getGridSquare 全數回 nil（Lua 端走 IsoCell.java:3181-3183 分派：dedicated server 進
+-- ServerMap.java:682-687，單機進 IsoCell.java:3197-3206）→ 該 chunk 的 counts 為空 → 不進
+-- reasons。舊版把這種「一格都沒看到」當成「已回到上限內」直接刪掉記錄，使確認計時歸零；
+-- 每輪都恰好在確認前卸載的區塊，就永遠等不到 ensureWarning 的「第二次仍超標」。
+--
+-- observed 的判準是 consumeScanQueue 每個 tick 對 active chunk 重查一次
+-- getChunkForGridSquare（見那裡的說明），不是「至少數到一格」——後者在「掃描跨 tick、
+-- 中途卸載」時會讓低估的 counts 帶著「已觀測」溜過去。
+--
+-- **已知限制**：導向閒置分支並沒有讓記錄免於老化——lastSeen 只在「完整觀測且仍超標」時
+-- 刷新（見下方 reasons 分支），故未觀測記錄的年齡是「自上次超標觀測的那一次 finishJob 到
+-- 本次 finishJob 的經過時間」，其中除了掃描本身，還含排隊等待（dirty job 插在前面）與
+-- 週期間隔。staleMs＝ScanIntervalSeconds × WARN_STALE_INTERVALS（預設 60s×20＝20 分鐘）
+-- 小於實測輪次上界 46 分鐘，因此長輪次的伺服器上記錄仍會在同一次 finishJob 被當成閒置
+-- 回收、計時仍然歸零。（未載入區塊改為整塊跳過後一輪約省 18% 的格數走訪，輪次會縮短，
+-- 但人多時仍以小時計。）要把兩端都封住，門檻得綁「連續未觀測的輪數」而不是壁鐘時間，
+-- 或至少大於最大的 finishJob 間隔（不只是最長掃描耗時）；那是獨立的設計取捨，不在本次
+-- 改動範圍內。
 local function pruneChunkWarnings(job, reasons, now)
     local staleMs = warnInterval() * C.WARN_STALE_INTERVALS
     local stale = {}
     for key, record in pairs(warned) do
         local separator = string.find(key, "|", 1, true)
         local keyChunk = separator and string.sub(key, 1, separator - 1) or ""
-        if job.chunkSet[keyChunk] then
+        local chunk = job.chunkSet[keyChunk]
+        if chunk and chunk.observed == true then
             if reasons[key] then
                 record.lastSeen = now
             else
@@ -453,7 +604,7 @@ local function finishJob(job, now)
                         if ensureWarning(warningKey, chunk, fullType, count, maxChunk, now) then
                             local list = bucket.candidates[key] and bucket.candidates[key][fullType]
                             if list and #list > 0 then
-                                selectCandidates(list, count - maxChunk, selected, "chunk", maxChunk, bucketName)
+                                selectCandidates(list, count - maxChunk, selected, "chunk", bucketName)
                             else
                                 -- 超標但無可刪候選（全部 isIgnoreRemoveSandbox/favorite/protectlist/非空容器）：記一次診斷 log
                                 local record = warned[warningKey]
@@ -475,32 +626,170 @@ local function finishJob(job, now)
             for ownerIndex, counts in pairs(bucket.regionCount) do
                 local playerObj = job.players[ownerIndex]
                 if playerObj then
-                    -- 該玩家擁有的區塊清單只建一次（且延後到真的要挑候選時才建）：
-                    -- 否則「每位玩家 × 每種超標物品」都得重掃整份 counts，人多時是一次性尖峰
+                    -- 該玩家擁有的區塊清單只建一次：否則「每位玩家 × 每種超標物品」都得重掃
+                    -- 整份 counts，人多時是一次性尖峰。本輪只要有 fullType 超標就會用到它
+                    -- （下面的貢獻清單需要），故不再延後到挑候選時才建
                     local ownerKeys = nil
                     for fullType, count in pairs(counts) do
                         if count > maxArea then
                             local warningKey = areaWarnKey(playerObj, bucketName, fullType)
                             areaReasons[warningKey] = true
-                            if ensureAreaWarning(warningKey, playerObj, fullType, count, maxArea, now) then
-                                if not ownerKeys then
-                                    ownerKeys = {}
-                                    for key in pairs(bucket.counts) do
-                                        if chunkOwnedBy(getChunk(job, key), ownerIndex) then
-                                            ownerKeys[#ownerKeys + 1] = key
-                                        end
+                            local confirmed =
+                                ensureAreaWarning(warningKey, playerObj, fullType, count, maxArea, now)
+                            if not ownerKeys then
+                                ownerKeys = {}
+                                for key in pairs(bucket.counts) do
+                                    if chunkOwnedBy(getChunk(job, key), ownerIndex) then
+                                        ownerKeys[#ownerKeys + 1] = key
                                     end
                                 end
-                                local regionCandidates = {}
-                                for _, key in ipairs(ownerKeys) do
-                                    local list = bucket.candidates[key] and bucket.candidates[key][fullType]
-                                    if list then
-                                        for _, record in ipairs(list) do
-                                            regionCandidates[#regionCandidates + 1] = record
-                                        end
+                            end
+                            -- 記下這筆 area 計數是由哪些區塊貢獻的，供下面的回收判定分辨
+                            -- 「總數掉到門檻以下」是真的被清掉、還是有來源區塊本輪沒被觀測到。
+                            --
+                            -- 是**合併**不是覆寫：本輪沒觀測到的來源不會出現在 bucket.counts 裡，
+                            -- 直接覆寫就會把它忘掉。忘掉的後果可重現——六個區塊各 9 件（真實 54）、
+                            -- 其中一個卸載後仍觀測到 45 > 40 而觸發清理，清完可見的 5 件之後下一輪
+                            -- 觀測到 40 不再超標，若清單已丟掉那個卸載來源就會判成「已解決」而刪除
+                            -- 記錄，可是真實總數還有 49。
+                            -- 只有「本輪完整觀測到、卻沒有這個 fullType 的計數」才是真的清空可移除；
+                            -- 已經離開本輪掃描盒的來源（玩家走遠）也移除，避免清單無界成長
+                            local record = areaWarned[warningKey]
+                            local contributing = {}
+                            if record.chunks then
+                                for ck in pairs(record.chunks) do
+                                    local prev = job.chunkSet[ck]
+                                    -- 必須同時仍屬於**這位玩家**的區域：area 記錄是 per-player 的。
+                                    -- 少了 chunkOwnedBy 這道，玩家搬家後舊來源只要落在別人掃描盒的
+                                    -- 外圈（在 chunkSet 內但永遠載不到），就會被永久併進他的來源集，
+                                    -- 讓 underCounted 恆真 ⇒ 記錄永遠不會在達標輪被回收 ⇒ 下次超標時
+                                    -- 直接沿用舊記錄清理、不再給玩家警告。（讀不到的來源本身不擋刪除，
+                                    -- 因為 recount 用的是下界；這道 guard 守的是記錄能不能收斂）
+                                    if prev and chunkOwnedBy(prev, ownerIndex) and prev.observed ~= true then
+                                        contributing[ck] = true
                                     end
                                 end
-                                selectCandidates(regionCandidates, count - maxArea, selected, "area", maxArea, bucketName)
+                            end
+                            for _, key in ipairs(ownerKeys) do
+                                if bucket.counts[key][fullType] then
+                                    contributing[key] = true
+                                end
+                            end
+                            record.chunks = contributing
+                            if confirmed then
+                                -- victim 帶的來源集要**依計數降冪取前 N 塊**，不是整份 contributing：
+                                -- ① recount 用下界，取計數最高的幾塊能讓「下界超過上限」最快成立，
+                                --    提早退出的命中率最大化；
+                                -- ② 走訪量因此天生就 ≤ N，不必在 recount 裡另設單件上限；
+                                -- ③ 結果不再取決於 pairs 的走訪順序（Kahlua 是插入序、標準 Lua 是
+                                --    帶隨機種子的雜湊序），同一個熱區不會「有時清得掉有時清不掉」。
+                                -- 若前 N 塊的計數和已經 ≤ 上限，就代表無論怎麼取都湊不出足以證明超標的
+                                -- 下界 ⇒ **整批不排入**。少了這一刀，每一輪都會排入註定全部被 recount
+                                -- 取消的 victim（record.time 建立後不更新 ⇒ confirmed 恆真），形成
+                                -- 淨產出為零卻持續佔用掃描預算的永久負載——正好和本 MOD 的目的相反。
+                                --
+                                -- 選 top-N 用「插入進兩個固定長度 ≤ N 的平行陣列」，**不是**先為每塊
+                                -- 配一個 {key,n} 再排序整份：ScanRadius 最大 128 ⇒ 單一玩家單層 33×33
+                                -- ＝1089 塊、站在 z≠0 時兩層共 2178 塊，而這段是 per player × bucket ×
+                                -- 超標 fullType 的。引擎玩家上限是 254（ServerOptions.java:30,73），
+                                -- 「每塊一個小 table」在最壞情況要配上百萬個 KahluaTableImpl／
+                                -- LinkedHashMap（本專案實測 10 萬筆三欄 record 約 35 MiB）。
+                                -- 這裡的配置量固定是兩個 ≤N 的陣列，與世界內容量無關
+                                local topKeys, topCounts, topLen = {}, {}, 0
+                                local provable = 0
+                                local sourceCount = 0
+                                for ck in pairs(contributing) do
+                                    sourceCount = sourceCount + 1
+                                    local byType = bucket.counts[ck]
+                                    local n = (byType and byType[fullType]) or 0
+                                    local dropped = nil
+                                    if topLen < C.AREA_RECOUNT_CHUNKS_PER_TICK then
+                                        topLen = topLen + 1
+                                    elseif n > topCounts[topLen] then
+                                        dropped = topCounts[topLen]
+                                    else
+                                        n = nil
+                                    end
+                                    if n then
+                                        -- 線性插入：N 是 32，比配置整份再排序便宜，且不配任何新 table
+                                        local pos = topLen
+                                        while pos > 1 and topCounts[pos - 1] < n do
+                                            topKeys[pos] = topKeys[pos - 1]
+                                            topCounts[pos] = topCounts[pos - 1]
+                                            pos = pos - 1
+                                        end
+                                        topKeys[pos] = ck
+                                        topCounts[pos] = n
+                                        provable = provable + n - (dropped or 0)
+                                    end
+                                end
+                                local recountSources = {}
+                                for index = 1, topLen do
+                                    recountSources[topKeys[index]] = true
+                                end
+                                if provable > maxArea then
+                                    -- 候選仍取**全區**：安全性由 recount 的前綴下界保證（見下方
+                                    -- 論證），與 victim 落在哪一塊無關。曾經把候選限制在 recountSources
+                                    -- 內，那會讓 selectCandidates 的「最新堆先刪」政策失效——依 item ID
+                                    -- 降序挑選的前提是候選涵蓋全區，先被密度 top-32 過濾掉就不是同一個政策
+                                    local regionCandidates = {}
+                                    for _, key in ipairs(ownerKeys) do
+                                        local list = bucket.candidates[key] and bucket.candidates[key][fullType]
+                                        if list then
+                                            for _, candidate in ipairs(list) do
+                                                regionCandidates[#regionCandidates + 1] = candidate
+                                            end
+                                        end
+                                    end
+                                    -- 額度用 provable 而不是全區 count。這**不是**安全性所需——刪到低於
+                                    -- 上限由 recount 的前綴下界擋住（實測把它換回 count 沒有任何斷言變紅）。
+                                    -- 換口徑的價值是效率：用全區 count 會多排 count - provable 件註定被
+                                    -- 否決的 victim，每件都要先付一次 recount 走訪才被丟掉
+                                    selectCandidates(regionCandidates, provable - maxArea, selected, "area", bucketName, recountSources)
+                                    -- 旗標要能翻回來：清理會把分佈攤平（候選取全區、依最新 ID 排序，
+                                    -- 不保證優先清最密的塊），所以熱點可能在下一輪變成「證明不了」。
+                                    -- 只設不清會讓那次靜默無日誌，管理員看到的仍是「上限失效」。
+                                    -- 翻轉需要跨輪的分佈變化，不會洗檔
+                                    record.loggedUnprovable = nil
+                                elseif not record.loggedUnprovable then
+                                    -- 超標但「證明不了」：管理員需要知道這件事，否則 area 上限看起來
+                                    -- 就是靜默失效（chunk scope 有 items_protected_over，這是 area 的
+                                    -- 對應診斷）。
+                                    -- 兩層節流：記錄層（同一個 episode 只記一次）＋ 玩家層（同一位
+                                    -- 玩家至少間隔 UNPROVABLE_LOG_INTERVAL_MS）。只有記錄層的話，
+                                    -- 同時製造多種稀疏超標型別、或走遠讓記錄被回收再回來重建，
+                                    -- 都能繞過而洪水寫檔
+                                    record.loggedUnprovable = true
+                                    local who = playerObj:getUsername()
+                                    local lastAt = unprovableLogAt[who]
+                                    if not lastAt or now - lastAt >= C.UNPROVABLE_LOG_INTERVAL_MS then
+                                        -- 順手清掉過了節流間隔的舊 key。username 的基數**不是**
+                                        -- 由同時在線人數封頂的（MAX_PLAYERS 254 只限制同時在線），
+                                        -- 伺服器長期運行會先後出現無限多個名字 ⇒ 不清就是一張無界表。
+                                        -- 過期的 key 對節流判定已無作用，刪掉不影響行為。
+                                        -- 先收集再刪：Kahlua 的 table 底層是 LinkedHashMap，
+                                        -- 邊迭代邊改不保證安全
+                                        local expired = nil
+                                        for name, at in pairs(unprovableLogAt) do
+                                            if now - at >= C.UNPROVABLE_LOG_INTERVAL_MS then
+                                                expired = expired or {}
+                                                expired[#expired + 1] = name
+                                            end
+                                        end
+                                        if expired then
+                                            for _, name in ipairs(expired) do
+                                                unprovableLogAt[name] = nil
+                                            end
+                                        end
+                                        unprovableLogAt[who] = now
+                                        local px, py, pz = playerObj:getX(), playerObj:getY(), playerObj:getZ()
+                                        Cleaner.log("items_area_unprovable", who, px, py, pz,
+                                            "bucket=" .. bucketName .. " fullType=" .. Cleaner.sanitize(fullType)
+                                                .. " count=" .. count .. " limit=" .. maxArea
+                                                .. " sources=" .. sourceCount .. " top" .. C.AREA_RECOUNT_CHUNKS_PER_TICK
+                                                .. "=" .. provable)
+                                    end
+                                end
                             end
                         end
                     end
@@ -509,13 +798,40 @@ local function finishJob(job, now)
         end
     end
 
-    -- 每輪 periodic 都涵蓋全部線上玩家與兩個桶，因此沒出現在本輪 areaReasons 的記錄
-    -- ＝已回到上限內，或該玩家已離線 → 一律清掉
+    -- 沒出現在本輪 areaReasons 的記錄有三種成因：① 真的回到上限內 ② 該玩家已離線
+    -- ③ 計數來源裡有區塊本輪沒被觀測到（區塊卸載）使總數低估。第三種不能當已解決——
+    -- 舊版把三者一律刪除，於是玩家一走遠讓部分區塊卸載，area 警告就被清掉、確認計時歸零。
+    --
+    -- 判定只看**這筆記錄的計數來源**（record.chunks），不是「區域內所有區塊」：後者幾乎恆為
+    -- 真，因為區域通常含載不到的區塊——掃描盒（ScanRadius 80 → 21×21 區塊，168 格寬）大於
+    -- 單機／自架主機的載入視窗（chunkGridWidth 13~19 → 104~152 格，IsoChunkMap.java:60,107-120；
+    -- dedicated server 則按 64×64 的 ServerCell 整塊載入，ServerMap.java:225,260-269，覆蓋範圍
+    -- 未必小於掃描盒），而玩家站在 z≠0 時 buildPeriodicChunks 會把整層都排進來，露天區塊的
+    -- min/maxLevel 是 int 預設 0（IsoChunk.java:146-147）且只在真的放進該層 square 時才擴展
+    -- （:3084），故整層一律回 null（:3155-3159）。從未貢獻過計數的區塊不會進 record.chunks，
+    -- 判定因此只對真正的「來源消失」成立。
+    -- 未觀測的記錄改用與 chunk-scope 相同的閒置年齡上限收尾（上面那條 staleMs 已知限制在此
+    -- 一併適用）：既不誤判已解決，也不會無界滯留
     if job.kind == "periodic" then
+        local staleMs = warnInterval() * C.WARN_STALE_INTERVALS
         local staleArea = {}
-        for key in pairs(areaWarned) do
-            if not areaReasons[key] then
-                staleArea[#staleArea + 1] = key
+        for key, record in pairs(areaWarned) do
+            if areaReasons[key] then
+                record.lastSeen = now
+            else
+                local underCounted = false
+                if record.chunks then
+                    for ck in pairs(record.chunks) do
+                        local chunk = job.chunkSet[ck]
+                        if chunk and chunk.observed ~= true then
+                            underCounted = true
+                            break
+                        end
+                    end
+                end
+                if not underCounted or now - (record.lastSeen or record.time) > staleMs then
+                    staleArea[#staleArea + 1] = key
+                end
             end
         end
         for _, key in ipairs(staleArea) do
@@ -535,6 +851,10 @@ end
 
 local function consumeScanQueue(now)
     local budget = C.SQUARES_PER_TICK
+    -- 地板物件走訪的單 tick 額度。用區域 table 而不是掛在 job 上：這個函式**每個 tick 呼叫一次**，
+    -- 所以額度隨函式進入自然重建；同一個 tick 內切換到下一個掃描工作時仍共用同一份，
+    -- 因為要封頂的是「這一個 tick 做了多少事」，不是「每個工作各自能做多少事」
+    local visits = { left = C.SCAN_ITEM_VISITS_PER_TICK }
     while budget > 0 do
         if not activeJob then
             activeJob = table.remove(scanQueue, 1)
@@ -551,43 +871,106 @@ local function consumeScanQueue(now)
             end
             activeJob = nil
         else
-            local offset = activeJob.squareIndex
-            local x = chunk.cx * C.CHUNK_SIZE + (offset % C.CHUNK_SIZE)
-            local y = chunk.cy * C.CHUNK_SIZE + math.floor(offset / C.CHUNK_SIZE)
-            local square = getCell():getGridSquare(x, y, chunk.z)
-            if square then
-                scanSquare(activeJob, chunk, square)
+            -- 每個 tick 對正在掃的 chunk 重查一次載入狀態。一個 chunk 有 64 格而每 tick 預算
+            -- 只有 SQUARES_PER_TICK（48），單一 chunk 的掃描必定跨 tick，只在起頭查一次擋不住
+            -- 中途卸載（前段有值、後段全 nil，counts 就是低估值）。
+            -- getChunkForGridSquare 是 IsoCell 的 public instance method（IsoCell.java:332-356）：
+            -- Kahlua 對 Java 物件暴露所有 public 非 static method，@LuaMethod 只用於註冊**全域**
+            -- 函式，所以不必在那裡找它（本檔既有的 getCell():getGridSquare 也是同一條路）。
+            -- 參數是 world-square 座標；dedicated server 分派 ServerMap.instance.getChunk（:334
+            -- → ServerMap.java:669，cell 未載入或該 IsoChunk 為 null 時回 null），單機走每位
+            -- 玩家的 chunkMap 視窗、全部落空才回 null（:336-354）。
+            -- observed 一旦判為 false 就不再翻回 true——中途漏掉的那幾格補不回來
+            if chunk.checkedTick ~= tickSeq then
+                chunk.checkedTick = tickSeq
+                local loaded = getCell():getChunkForGridSquare(
+                    chunk.cx * C.CHUNK_SIZE, chunk.cy * C.CHUNK_SIZE, chunk.z) ~= nil
+                if not loaded then
+                    chunk.observed = false
+                elseif chunk.observed == nil then
+                    chunk.observed = true
+                end
             end
-            activeJob.squareIndex = activeJob.squareIndex + 1
-            if activeJob.squareIndex >= C.CHUNK_SIZE * C.CHUNK_SIZE then
+            if chunk.observed == false then
+                -- 本輪這塊沒有全程載入：整塊跳過，省掉 64 次必定回 nil 的 getGridSquare。
+                -- 掃描盒（ScanRadius 80 → 168 格寬）比引擎載入視窗大一圈，外圈區塊每輪都會走到
+                -- 這裡，所以這條同時是效能改善。仍扣一格預算，避免單一 tick 把整個 job 的
+                -- 未載入區塊一次走完
                 activeJob.squareIndex = 0
+                activeJob.itemOffset = nil
                 activeJob.chunkIndex = activeJob.chunkIndex + 1
+                budget = budget - 1
+            else
+                local offset = activeJob.squareIndex
+                local x = chunk.cx * C.CHUNK_SIZE + (offset % C.CHUNK_SIZE)
+                local y = chunk.cy * C.CHUNK_SIZE + math.floor(offset / C.CHUNK_SIZE)
+                local square = getCell():getGridSquare(x, y, chunk.z)
+                local finished = true
+                if square then
+                    finished = scanSquare(activeJob, chunk, square, visits)
+                else
+                    activeJob.itemOffset = nil
+                end
+                if not finished then
+                    -- 這一格還沒走完（物件額度用完）：**不前進** squareIndex，下一個 tick 從
+                    -- job.itemOffset 記住的位置接著走。前進的話該格剩下的物件永遠不會被計數
+                    return
+                end
+                activeJob.squareIndex = activeJob.squareIndex + 1
+                if activeJob.squareIndex >= C.CHUNK_SIZE * C.CHUNK_SIZE then
+                    activeJob.squareIndex = 0
+                    activeJob.chunkIndex = activeJob.chunkIndex + 1
+                end
+                budget = budget - 1
+                if visits.left <= 0 then
+                    -- 物件額度用完：本 tick 收工。這一格是完整走完的，所以 itemOffset 已清
+                    return
+                end
             end
-            budget = budget - 1
         end
     end
 end
 
-local function findQueuedWorldItem(record)
+-- visits 是 find 專屬的單 tick 走訪額度，與 recount 的分開：共用一份的話 recount 恰好用完
+-- 就會讓這裡永遠拿不到額度、victim 全被放掉。觸頂當成找不到（下一輪會重新排）。
+--
+-- **反向掃**不是風格選擇：候選依 item ID 由大到小挑（見 selectCandidates），而掉落物是 append
+-- 進 worldObjects 的（IsoGridSquare.java:319），所以 victim 幾乎總在尾端。正向掃在「單格堆了
+-- 數萬件」時每輪都在前段觸頂、永遠找不到 victim ⇒ 加額度反而讓清理在最需要它的場景失活
+local function findQueuedWorldItem(record, visits)
     local square = getCell():getGridSquare(record.x, record.y, record.z)
     if not square then
         return nil, nil, nil
     end
     local worldObjects = square:getWorldObjects()
-    for index = 0, worldObjects:size() - 1 do
+    local index = worldObjects:size() - 1
+    while index >= 0 and visits.left > 0 do
+        visits.left = visits.left - 1
         local worldObj = worldObjects:get(index)
         local item = worldObj and worldObj:getItem()
         if item and item:getID() == record.id and item:getFullType() == record.fullType then
             return item, worldObj, square
         end
+        index = index - 1
     end
     return nil, nil, square
 end
 
 -- 重數某 chunk 內某 fullType、**且屬於同一個計數桶**的現存地板物品數（帶本 tick cache）；
 -- 供刪除前 recount，避免用過期快照刪到低於閾值。必須依桶過濾——否則 normal 桶的受害者
--- 會把世界原生那些一起數進來，recount 永遠過關而刪過頭
-local function liveChunkCount(cx, cy, z, fullType, bucketName, ctx, cache)
+-- 會把世界原生那些一起數進來，recount 永遠過關而刪過頭。
+--
+-- visits 是 recount 專屬的單 tick 走訪額度（與 find 的分開）。額度用盡就把**已數到的部分**
+-- 當結果並回報 partial：判定用的是下界（見 processDeleteQueue 的論證），數得比實際少只會少刪。
+-- needed 是「再數到幾件就足以證明超標」，達到就立刻停——單格堆了一萬件而上限只有一百時，
+-- 走前一百零一件就夠了，不必白走完整個額度。
+-- 為什麼需要額度：AREA_RECOUNT_CHUNKS_PER_TICK 封頂的是區塊數與格數，而單一格子的
+-- worldObjects 沒有容量上限（IsoGridSquare.java:319），2048 格裡塞多少物件不是我們決定的。
+-- 觸頂時**必須先數已負擔得起的那些**，不能整格跳過：跳過會讓「全堆在一格」的傾倒永遠得到
+-- 下界 0、永遠證明不了超標，清理對最該處理的形狀失活。
+-- 部分結果**不寫進 cache**：cache 的契約是「這個 tick 內這一塊的完整計數」，寫進去會讓同 tick
+-- 的其他 victim 沿用偏低值，而它們本來可能有額度數完
+local function liveChunkCount(cx, cy, z, fullType, bucketName, ctx, cache, visits, needed)
     local ck = chunkKey(cx, cy, z) .. "|" .. bucketName .. "|" .. fullType
     if cache[ck] ~= nil then
         return cache[ck], ck
@@ -600,13 +983,23 @@ local function liveChunkCount(cx, cy, z, fullType, bucketName, ctx, cache)
             local square = getCell():getGridSquare(baseX + ox, baseY + oy, z)
             if square then
                 local wos = square:getWorldObjects()
-                for i = 0, wos:size() - 1 do
+                local total = wos:size()
+                for i = 0, total - 1 do
+                    -- 逐筆扣額度而不是整格預扣：預扣的話「數到第 101 件就證明超標」仍會把整格
+                    -- 的額度燒掉，同 tick 後面的 victim 就被誤判成觸頂而取消
+                    if visits.left <= 0 then
+                        return count, ck, true
+                    end
+                    visits.left = visits.left - 1
                     local wo = wos:get(i)
                     local it = wo and wo:getItem()
                     if it and it:getFullType() == fullType then
                         local isHigh = Cleaner.isHighTolerance(ctx.highSet, it, fullType, ctx.stampsEnabled)
                         if isHigh == (bucketName == "high") then
                             count = count + 1
+                            if needed and count >= needed then
+                                return count, ck, true
+                            end
                         end
                     end
                 end
@@ -643,22 +1036,148 @@ local function processDeleteQueue()
     }
     local liveCache = {}
     local processed = 0
+    -- area recount 的單 tick 區塊額度。liveChunkCount 每塊要走 64 格，而掃描器本身刻意限成
+    -- SQUARES_PER_TICK（48）格/tick，所以 recount 也必須有天花板：同型物品每塊放 1 件、鋪滿
+    -- 401 塊就超過 MaxFloorItemsPerTypeArea 預設 400 而每塊遠低於區塊上限，不封頂的話這一批的
+    -- 第一個 victim 一個 tick 就要走 401×64≈25,664 格。
+    -- 額度只對「真的要新數」的來源計費（liveCache 命中不計）：同一個 area 熱點的多個 victim
+    -- 共用同一份來源結果，第二件之後是零格成本，不該被算進額度而被推遲
+    local recountSpent = 0
+    -- 地板物件走訪的單 tick 額度，recount 與 find **各一份**（不共用）：共用的話 recount 恰好
+    -- 用完就會讓 findQueuedWorldItem 永遠拿不到額度、victim 全被當成找不到而放掉。
+    -- 隨函式進入重建，所以是「每 tick」而不是「每件」
+    local recountVisits = { left = C.RECOUNT_ITEM_VISITS_PER_TICK }
+    local findVisits = { left = C.FIND_ITEM_VISITS_PER_TICK }
+    -- 上限**不能**用排入當時的快照：管理員可以在執行期改 sandbox（server 收到設定封包後
+    -- SandboxOptions.load/applySettings/toLua，GameServer.java:1695-1697），把上限調高或設 0
+    -- 停用。照舊值刪就會刪掉當前政策允許保留的物品，而那是不可逆的。
+    -- 每個 tick 各桶只解析一次（bucketLimits 要讀沙盒字串並 tonumber，而這裡每 tick 最多
+    -- 跑 ITEMS_PER_TICK 件）
+    local limitCache = {}
+    local function currentLimit(bucketName, scope)
+        local name = bucketName or "normal"
+        local entry = limitCache[name]
+        if not entry then
+            local maxChunk, maxArea = bucketLimits(name)
+            entry = { chunk = maxChunk, area = maxArea }
+            limitCache[name] = entry
+        end
+        return scope == "area" and entry.area or entry.chunk
+    end
     while processed < C.ITEMS_PER_TICK and deleteHead <= #deleteQueue do
         local record = deleteQueue[deleteHead]
+
+        -- 刪除前 recount：排隊期間玩家可能已自行撿走，使該範圍回到閾值內 → 取消本件（不刪到
+        -- 低於閾值）。AGENTS.md 明文要求跨 tick 消化的刪除佇列要依**同 scope + limit** 重數
+        local overThreshold = true
+        local defer = false
+        local limit = currentLimit(record.bucket, record.scope)
+        if limit <= 0 then
+            -- 管理員已把這個 scope 的上限設成 0（停用）⇒ 取消本件
+            overThreshold = false
+        elseif record.scope == "chunk" then
+            -- needed 傳 limit + 1：數到這個數就已證明超標，不必把整塊走完
+            local live = liveChunkCount(record.cx, record.cy, record.z, record.fullType, record.bucket,
+                ctx, liveCache, recountVisits, limit + 1)
+            overThreshold = live > limit
+        elseif record.scope == "area" then
+            -- area 的閾值是跨區塊的總數，只重數 victim 自己那一塊不是同一個 scope，所以要把
+            -- victim 帶的來源集重數一遍。那個集合在排入時已依計數降冪截到
+            -- AREA_RECOUNT_CHUNKS_PER_TICK 塊（見 finishJob），所以單件走訪量天生有界，
+            -- 這裡不必再設單件上限。
+            --
+            -- 讀不到的來源一律**當 0**，於是 live 是「該範圍現存總數的下界」。這個不對稱正是
+            -- 安全性的來源：`live > limit` 成立時真實總數必然也 > limit，刪到可觀測部分等於
+            -- limit 之後，總數＝limit ＋（讀不到的那些，≥0）⇒ 永遠不會刪到低於閾值。
+            -- 反之 `live <= limit` 時無從判斷真實總數，就不刪。
+            --
+            -- 為什麼不用「該來源最後一次觀測到的計數」補那些讀不到的區塊：那是過期快照。
+            -- 區塊可能在兩輪之間載入過又卸載，期間 vanilla 的 HoursForWorldItemRemoval（chunk
+            -- 載入時的 TTL 過濾）、其他 MOD 或玩家短暫互動都可能改變內容，舊值偏高就會把
+            -- 刪除放行到低於閾值。
+            -- 為什麼不改成「任一來源讀不到就整件取消」：那會讓 area 清理在**預設常態**下永久
+            -- 失活——掃描盒（ScanRadius 80 → 168 格寬）比引擎載入視窗（104~152 格）大一圈，
+            -- 外圈環帶恆存在，玩家傾倒後走開幾個區塊就會讓某個來源永遠讀不到，而只要仍超標
+            -- 每輪都會刷新 lastSeen，staleMs 也等不到收斂。
+            --
+            -- 已知的保守偏差：排隊期間若有人把物品搬到範圍內**其他**區塊（不在來源集裡），
+            -- 重數會低估而少刪。方向仍是少刪、不會多刪
+            if not record.areaChunks then
+                overThreshold = false
+            else
+                local live = 0
+                local walked = 0
+                local remaining = C.AREA_RECOUNT_CHUNKS_PER_TICK - recountSpent
+                local deferred = false
+                for ck in pairs(record.areaChunks) do
+                    local cached = liveCache[ck .. "|" .. tostring(record.bucket) .. "|" .. record.fullType]
+                    if cached ~= nil then
+                        -- 本 tick 已經數過這一塊：零成本，不計費也不受額度限制。同一個 area 熱點的
+                        -- 多個 victim 因此能在同一個 tick 內全部處理完，不會被前一件用掉的額度推遲
+                        live = live + cached
+                    elseif walked >= remaining then
+                        -- 本 tick 額度用完 ⇒ 這件留在佇列原位（deleteHead 不前進），下一個 tick 用
+                        -- 完整額度從頭重數（不累加不同時點的部分和）。額度歸零後第一件必定走得完，
+                        -- 因為來源集本身就 ≤ 上限，所以佇列不會卡死
+                        deferred = true
+                        break
+                    else
+                        local cx, cy, cz = parseChunkKey(ck)
+                        if cx and getCell():getChunkForGridSquare(
+                            cx * C.CHUNK_SIZE, cy * C.CHUNK_SIZE, cz) ~= nil then
+                            -- needed 是「這一塊再數到幾件就足以證明整個範圍超標」：下界已累積
+                            -- live，所以還差 limit + 1 - live 件。單格堆了上萬件時這讓走訪停在
+                            -- 剛好夠用的地方，而不是把額度燒完
+                            local got = liveChunkCount(cx, cy, cz, record.fullType, record.bucket,
+                                ctx, liveCache, recountVisits, limit + 1 - live)
+                            live = live + got
+                        else
+                            -- 讀不到的來源以 0 記進本 tick 的快取：同一個 tick 內載入狀態不會變，
+                            -- 後續 victim 共用這個結論就不必再付一次 Java 往返。快取只活一個 tick，
+                            -- 所以區塊之後載入回來也不會被這個 0 卡住
+                            liveCache[ck .. "|" .. tostring(record.bucket) .. "|" .. record.fullType] = 0
+                        end
+                        -- 載入探測本身也計費：來源全部卸載時，若只對「真的走了 64 格」計費，
+                        -- 這裡就會變成不受約束的 Java 往返
+                        walked = walked + 1
+                    end
+                    -- 下界一旦超過閾值就已證明超標，不必再數下去。來源集按計數降冪排過，
+                    -- 所以密集熱點通常只走前幾塊。
+                    --
+                    -- 為什麼提早退出（於是 live 只是「前綴和」）不會讓刪除跑到上限以下——
+                    -- 逐步不變式：記真實總數為 T、前綴和為 P、上限為 L。
+                    --   ① 每次放行前都成立 T ≥ P（P 只累加真的數到的物品，讀不到的當 0），且 P > L；
+                    --   ② 每次刪除至多讓 T 與 P 同減一：刪前綴內的物品時兩者都減一（成功刪除會
+                    --      遞減 liveCache），刪前綴外的只有 T 減一而 P 不變；
+                    --   ⇒ T ≥ L 恆成立。
+                    -- **這個論證的載重前提是 liveCache 只活一個 tick**（就在本函式內宣告）。
+                    -- 一旦把它提升成跨 tick 的長生命週期快取，遞減後的舊值就不再是當下的下界
+                    -- （中間玩家會補貨／撿走、其他 MOD 會動、chunk 重載時 vanilla 還有 TTL 過濾），
+                    -- ①、② 同時失效——而且不會有任何斷言變紅。要改快取生命週期就得重做這個證明
+                    if live > limit then
+                        break
+                    end
+                end
+                if deferred then
+                    defer = true
+                else
+                    recountSpent = recountSpent + walked
+                    overThreshold = live > limit
+                end
+            end
+        end
+
+        if defer then
+            break
+        end
+
         deleteHead = deleteHead + 1
         pendingDeleteIDs[record.id] = nil
         processed = processed + 1
 
-        -- chunk-scope 刪除前 recount：玩家可能已自行撿走使該 chunk 回到閾值內，則取消本件（不刪到低於閾值）
-        local overThreshold = true
-        if record.scope == "chunk" then
-            local live = liveChunkCount(record.cx, record.cy, record.z, record.fullType, record.bucket, ctx, liveCache)
-            overThreshold = live > (record.limit or 0)
-        end
-
         local item, worldObj, square = nil, nil, nil
         if overThreshold then
-            item, worldObj, square = findQueuedWorldItem(record)
+            item, worldObj, square = findQueuedWorldItem(record, findVisits)
             -- 分桶是掃描當下依當時設定算的；排隊等待期間管理員若改了 TouchTraceEnabled 或
             -- 高容忍清單，這件物品可能已不屬於當初那個桶 → fail-closed 放掉，下一輪用新設定重判
             if item and record.bucket
@@ -731,6 +1250,7 @@ local function resetDisabledState()
     dirtyChunks = {}
     warned = {}
     areaWarned = {}
+    unprovableLogAt = {}
     deleteQueue = {}
     deleteHead = 1
     pendingDeleteIDs = {}
@@ -741,6 +1261,10 @@ end
 local function onTick()
     -- LuaManager.java:9268-9273; forageServer.lua:455-471
     local now = getTimestampMs()
+    -- 無條件每 tick 遞增：consumeScanQueue 靠它判斷「這個 tick 是否已重查過 active chunk 的
+    -- 載入狀態」。曾經誤放進下面的 disabled 分支內部，結果只有「清理被停用」時才遞增、
+    -- 正常運作時恆為 0，於是每個 chunk 只在第一次被碰到時查一次載入狀態，跨 tick 重查整條失效
+    tickSeq = tickSeq + 1
     if Cleaner.isFloorCleaningDisabled() then
         resetDisabledState()
         return

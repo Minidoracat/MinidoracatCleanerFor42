@@ -37,6 +37,46 @@ Cleaner.DEFAULTS = {
 Cleaner.CONSTANTS = {
     SQUARES_PER_TICK = 48,
     ITEMS_PER_TICK = 16,
+    -- area victim 刪除前重數「來源區塊」時的區塊額度，同時是**排入時**來源集的截斷長度。
+    -- 每塊要走 64 格，取 32 即 2048 格/tick 的上限（掃描器本身是 SQUARES_PER_TICK＝48
+    -- 格/tick，但 recount 是突發而非持續，正式服 10 天只觸發過 7 次 area 清理）。
+    -- 需要上限的理由：同型物品每塊放 1 件、鋪滿 401 塊就超過 MaxFloorItemsPerTypeArea 預設
+    -- 400，而每塊都遠低於區塊上限 ⇒ 不封頂的話這一批的第一個 victim 一個 tick 就要走
+    -- 401×64≈25,664 格。
+    -- 排入時就把來源集依計數降冪截到這個長度（見 WorldScanner.finishJob），所以單件走訪量
+    -- 天生有界，recount 不必另設單件上限；截斷後的下界若證明不了超標就整批不排入，避免每輪
+    -- 都排入註定被取消的 victim。同一 tick 內已數過的來源不計費（liveCache 命中），所以同一
+    -- 個熱點的多個 victim 能在一個 tick 內處理完。這是校準旋鈕
+    AREA_RECOUNT_CHUNKS_PER_TICK = 32,
+    -- 以下三個是**地板物件走訪**的單 tick 硬額度。格數／區塊數封頂不等於成本封頂：
+    -- IsoGridSquare 的 worldObjects 是沒有應用層容量限制的 ArrayList（IsoGridSquare.java:319，
+    -- 掉落時直接 append、getter 原樣回傳 :9947-9949），單一格子堆到數萬件做得到，於是「每格
+    -- 完整走一遍」的迴圈成本由世界內容量決定而非我們決定——AGENTS.md 的通則是成本硬上限不可
+    -- 綁世界內容量。三者各自獨立計數，不共用一份額度：共用的話 recount 恰好用完就會讓
+    -- findQueuedWorldItem 永遠拿不到額度。
+    -- 觸頂語意各自不同（都是「少做」而非「多做」）：
+    --   掃描：把格內位置記在 job.itemOffset，下一個 tick 從那裡續走（不前進 squareIndex）。
+    --         所以計數仍精確、只是攤到多個 tick——換成「略過該格剩下的」會讓那些物品永遠不被
+    --         計數（每輪都在同一處觸頂），清理對單格大量堆積完全失效
+    --   recount：回傳已數到的部分計數。判定用下界，少數到只會少刪
+    --   find：當成找不到而放掉這件（fail-closed），下一輪重新排。**反向掃**（尾端往前）是必要
+    --         的：候選依 item ID 由大到小挑而掉落物 append 在尾端，正向掃會永遠在前段觸頂
+    SCAN_ITEM_VISITS_PER_TICK = 512,
+    RECOUNT_ITEM_VISITS_PER_TICK = 4096,
+    FIND_ITEM_VISITS_PER_TICK = 2048,
+    -- items_area_unprovable 的 per-player 節流間隔。這條診斷只有在「超標但下界證明不了」時
+    -- 才寫，誠實玩家很少碰到，能穩定量產的是刻意鋪成稀疏形狀的人——所以要有玩家層的間隔，
+    -- 不能只靠「每筆記錄一次」（多型別與記錄回收循環都能繞過）
+    UNPROVABLE_LOG_INTERVAL_MS = 600000,
+    -- 每個 (chunk, fullType) 保留的候選上限（依 item ID 降冪的 top-N）。這是「一輪最多從單一
+    -- 熱點刪多少」的天花板：更多的話下一輪繼續，所以仍會收斂，只是攤得慢
+    CANDIDATES_PER_TYPE = 512,
+    -- 單一掃描工作的候選配置兜底上限。per-type 額度已擋掉「單點爆炸」，但總量仍隨超標組合數
+    -- （區塊數 × 物品種類）成長，這道是純粹的記憶體 DoS 防線，設寬鬆值即可
+    CANDIDATES_PER_JOB = 20000,
+    -- 待刪佇列的總量上限。掃描每 tick 最多產生 SCAN_ITEM_VISITS_PER_TICK 個候選，而刪除只
+    -- 消化 ITEMS_PER_TICK 個——生產可以比消化快 32 倍，佇列必須自己有天花板
+    MAX_PENDING_DELETES = 20000,
     DIRTY_DELAY_MS = 60000,
     ANIMALS_PER_ROUND = 20,
     ANIMAL_EMERGENCY_MULTIPLIER = 2,

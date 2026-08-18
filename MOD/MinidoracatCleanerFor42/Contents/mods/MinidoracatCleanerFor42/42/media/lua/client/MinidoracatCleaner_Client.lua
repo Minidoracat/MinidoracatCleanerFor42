@@ -5,8 +5,17 @@ require "TimedActions/ISGrabItemAction"
 local Cleaner = MinidoracatCleaner
 
 -- 本地插入一行紅色系統訊息到聊天室預設頻道（僅 MP 有聊天面板；SP 自動跳過）
--- ISChat.addLineInChat 是 vanilla OnAddMessage 官方入口（ISChat.lua:707,1176），
--- message 僅需 getTextWithPrefix/getAuthor/setText（duck-typing，chatMessages 後續只呼叫 getTextWithPrefix）
+-- ISChat.addLineInChat 是 vanilla OnAddMessage 官方入口（ISChat.lua:707,1176）。
+--
+-- 這個 message 是 duck-typing 出來的，不是真的 ChatMessage。vanilla 的 chatMessages 只會呼叫
+-- getTextWithPrefix，但 **addLineInChat 是常被第三方 MOD 包起來的入口**，包裝者會對 message
+-- 呼叫任何 ChatMessage 方法來判斷訊息類型。實機實測：漢化包的 wrapper 用
+-- `pcall(function() return message:getRadioChannel() end)` 判斷是否電台訊息
+-- （AEBSWeather_Flx.lua:287-290），缺這個方法時 Kahlua 會記一筆「Tried to call nil」＋完整
+-- 堆疊——功能不受影響（對方有 pcall、且失敗就當非電台訊息），但每則警告與每則清理通知各洗
+-- 一次 log（單場測試 37 次），開 -debug 且啟用 Break On Error 時還會彈出除錯器暫停遊戲。
+-- 通則：對外交出的 duck-typed vanilla 物件，要補齊「合理的包裝者會先問的那些 getter」，
+-- 不能只滿足 vanilla 自己的呼叫路徑
 local function addChatLine(text)
     local chat = ISChat and ISChat.instance
     if not chat or not chat.defaultTab or chat.defaultTab.tabID == nil or not ISChat.addLineInChat then
@@ -15,6 +24,10 @@ local function addChatLine(text)
     local line = "<RGB:1,0.3,0.2>" .. text
     ISChat.addLineInChat({
         getTextWithPrefix = function() return line end,
+        getText = function() return text end,
+        -- vanilla ChatMessage.radioChannel 預設 -1＝非電台訊息（ChatMessage.java:23，
+        -- getter 在 :65；只有 ChatManager.showRadioMessage 與 RadioChat 會設成正值）
+        getRadioChannel = function() return -1 end,
         getAuthor = function() return nil end,
         setText = function() end,
     }, chat.defaultTab.tabID)
