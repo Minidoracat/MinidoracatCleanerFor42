@@ -1326,7 +1326,7 @@ local function processDeleteQueue()
             end
         end
         if item and Cleaner.isSafeFloorCandidate(item, worldObj, protectSet) then
-            local dropper = Cleaner.getItemModDataValue(item, Cleaner.KEY_DROPPED) or "unknown"
+            local dropper = Cleaner.readDrop(item) or "unknown"
             if Cleaner.removeFloorItem(item, worldObj, square) then
                 -- 任何成功刪除都遞減對應 chunk cache（不分 victim scope）；否則 area victim 刪同 chunk 後，
                 -- 後續 chunk record 會用到過期數量而多刪一筆（chunk→area→chunk 會 12→9，低於 limit 10）

@@ -4,14 +4,34 @@ local Cleaner = MinidoracatCleaner
 
 Cleaner.MOD_ID = "MinidoracatCleanerFor42"
 Cleaner.COMMAND_MODULE = "MinidoracatCleaner"
-Cleaner.KEY_DROPPED = "MIC42_lastDroppedBy"
+-- 章的 key 與值格式（合併格式；由 0.3.0 的三 key 精簡而來）
+--
+-- 章搭 vanilla 物品同步便車傳出（InventoryItem.save 寫整個 modData，:1693-1697）。
+-- 本 MOD 自己的 touch / touchAck 只帶 ID。正式服實測（2026-08-23，77 人）章佔
+-- 對外上傳 13.1%，其中 86% 在容器路徑——容器走 CompressIdenticalItems
+-- （ItemContainer.java:2421、AddInventoryItemToContainerPacket.java:58），
+-- 同 fullType 相鄰且逐 byte 相同才壓成每件 4 bytes（CompressIdenticalItems.java:166-179）。
+-- 真正成本是「阻止壓縮」，故兩個 mover key 合併、時間改小時取整。
+--
+-- 值格式：`<sanitizedName>,<epochHour>`。分隔符選 `,` 而不是別的可見字元，是因為它有**兩層**
+-- 保證不會出現在名字裡：① PZ 引擎層就拒絕含 `,` 的 username（ServerWorldDatabase.java:769，
+-- 禁用集 `; @ $ , \ / . ' ? "`）；② sanitizeName 本來就清 `,`。若改用 PZ 未禁的字元
+-- （`|` 試過、`=`、空白同理），則 `a|b` 與 `a b` 兩個合法且不同的帳號會消毒成同一個章值，
+-- 而 Commands 的覆蓋偵測正是比對這個值——碰撞時連 touch_overwrite 稽核都不會產生。
+Cleaner.KEY_TOUCH = "MIC42_t"
+-- 丟棄者單獨一個 key：同時是高容忍分桶依據（isHighTolerance），熱路徑只問「有沒有」。
+-- 值只有名字、不帶時間（與 0.3.0 的 KEY_DROPPED 語意相同）。
+Cleaner.KEY_DROP = "MIC42_d"
+
+-- 0.3.0 及更早的 key。**只讀不寫**：任一次蓋章都會一次刪掉這三個並改寫成上面兩個新 key。
+-- 沒再被碰過的舊物品仍讀得到章。0.1.3 的 MIC42_lastTouchedBy 依舊不讀。
+Cleaner.LEGACY_DROPPED = "MIC42_lastDroppedBy"
 -- 「最後操作者＋時間」：0.1.3 曾移除「最後接觸者」（當時假設接觸者≈丟棄者），玩家實證
 -- 背包對背包轉移完全不落地、不觸發任何丟棄章——而 B42 的一般容器轉移在 server 端純 Java
 -- 執行、無 Lua 事件也無 item log（Transaction.java:231-343 無 triggerEvent / LoggerManager），
--- 本 MOD 不記就無跡可循，故以獨立 key 重建。舊 key MIC42_lastTouchedBy 仍不讀取。
--- KEY_DROPPED 另承載高容忍分桶語意（isHighTolerance），兩 key 互不影響。
-Cleaner.KEY_MOVED = "MIC42_lastMovedBy"
-Cleaner.KEY_MOVED_AT = "MIC42_lastMovedAt"
+-- 本 MOD 不記就無跡可循，故以獨立 key 重建。
+Cleaner.LEGACY_MOVED = "MIC42_lastMovedBy"
+Cleaner.LEGACY_MOVED_AT = "MIC42_lastMovedAt"
 
 Cleaner.DEFAULTS = {
     AllowManualDelete = true,
@@ -91,7 +111,17 @@ Cleaner.CONSTANTS = {
     -- 消化 ITEMS_PER_TICK 個——生產可以比消化快 32 倍，佇列必須自己有天花板
     MAX_PENDING_DELETES = 20000,
     DIRTY_DELAY_MS = 60000,
+    -- 每輪掃描的移除總額度（語意不變），但移除本身跨 tick 攤平：見 ANIMALS_PER_TICK
     ANIMALS_PER_ROUND = 20,
+    -- 單一 tick 最多 remove 幾隻動物。不是改每輪總量，只把 remove 副作用跨 tick 攤平，
+    -- 避免同幀批次移除與動物聲音／碰撞路徑疊加；事故與 NaN 根因見 AGENTS.md 踩坑錄。
+    ANIMALS_PER_TICK = 3,
+    -- 單一 tick 最多重驗幾個候選。AGENTS.md 的硬規則要求「刪除前重數該範圍現存數，
+    -- 達標即取消」；動物側沒有便宜的範圍查詢，重數就是完整走訪該 plan 的候選清單。
+    -- remove 與 visit 因此各有預算：remove 封頂副作用，visit 封頂主執行緒成本。
+    -- 單一 plan 超過此值時無法在同 tick 得到一致 recount；本輪 fail-closed 不刪並寫
+    -- animal_recount_unprovable（不可跨 tick 攢 walkValid，前半段驗證會在 remove 前過期）。
+    ANIMAL_VISITS_PER_TICK = 512,
     ANIMAL_EMERGENCY_MULTIPLIER = 2,
     ZONE_BUFFER = 2,
     MANUAL_DELETE_LIMIT = 100,
@@ -292,8 +322,21 @@ end
 function Cleaner.getAnimalGroupSet()
     local result = {}
     local defaults = { "rat", "mouse", "rabbit", "chicken" }
+    local tokens = Cleaner.parseList(Cleaner.getOption("AnimalGroupList"), defaults)
+    -- 特殊 token：* 或 all（不分大小寫）＝允許 AnimalDefinitions 裡每一個 group。
+    -- 用 _allowAll sentinel，而不是把 index 的 key 抄進 set：
+    --   ① 掃描端對未知／未來 MOD group 仍放行（group 字串來自 getDef，不必預先列舉）
+    --   ② 建 set 的成本固定 O(tokens)，不隨物種數成長
+    -- 與一般關鍵字並存時，all 優先（例如 "all,rat" 仍是全部）
+    for _, token in ipairs(tokens) do
+        local lower = string.lower(trim(token))
+        if lower == "*" or lower == "all" then
+            result._allowAll = true
+            return result
+        end
+    end
     local index = buildAnimalNameIndex()
-    for _, token in ipairs(Cleaner.parseList(Cleaner.getOption("AnimalGroupList"), defaults)) do
+    for _, token in ipairs(tokens) do
         resolveAnimalGroups(token, index, result)
     end
     return result
@@ -338,8 +381,13 @@ function Cleaner.sanitize(value)
     return tostring(value or "unknown"):gsub("[\r\n\t]", " "):gsub("%[", "("):gsub("%]", ")")
 end
 
--- username 專用：在 sanitize 之上多清 , 與 =——它們是 log detail 欄位內的分隔符
--- （type=count,type=count），名字一旦被未來程式寫進 detail，就能偽造假的型別/數量對。
+-- username 專用：在 sanitize 之上多清 `,` 與 `=`。兩者都是分隔符，各有用途：
+--   `=`：log detail 欄位內的鍵值分隔符（type=count），名字一旦被未來程式寫進 detail，
+--     就能偽造假的型別/數量對。
+--   `,`：log detail 的項目分隔符，**同時**是 KEY_TOUCH 值的欄位分隔符
+--     （`<name>,<epochHour>`）。PZ 引擎層已拒絕含 `,` 的 username
+--     （ServerWorldDatabase.java:769），這裡是第二層——手改存檔或異版 client 送來的
+--     名字不受引擎檢查保護。
 -- 在「寫入點」（蓋章）用這個版本，之後所有讀取路徑自動繼承保護
 function Cleaner.sanitizeName(value)
     return (Cleaner.sanitize(value):gsub("[,=]", " "))
@@ -426,37 +474,171 @@ function Cleaner.isHighTolerance(matcher, item, fullType, stampsEnabled)
     if not stampsEnabled then
         return false
     end
-    return Cleaner.getItemModDataValue(item, Cleaner.KEY_DROPPED) == nil
+    return Cleaner.readDrop(item) == nil
 end
 
-function Cleaner.getItemModDataValue(item, key)
-    if not item or not item:hasModData() then
+-- 章值的欄位分隔符。PZ 拒絕含它的 username，sanitizeName 又清一次，故一個值裡至多一個。
+local TOUCH_SEP = ","
+
+local function toTouchHour(value)
+    local n = tonumber(value)
+    return n and math.floor(n / 3600) * 3600 or nil
+end
+
+-- 取 modData。**讀寫要用不同的取法**：`hasModData()` 是
+-- `table != null && !table.isEmpty()`（InventoryItem.java:429-431），對「從未有過 modData」
+-- 的物品回 false；讀取時據此早退可省掉無謂的 table 配置，但寫入時必須走 `getModData()`
+-- 讓它 lazy 建表（:433-439），否則新物品永遠蓋不上章。
+-- 兩者都先問「方法存在嗎」：ISToolTipInv 等 vanilla 入口會塞非 InventoryItem 進來，
+-- 對它呼叫 hasModData 就是 call nil 並中斷整個 tooltip 繪製（AGENTS.md 踩坑錄）。
+local function modDataForRead(item)
+    if not item or not item.hasModData or not item:hasModData() then
         return nil
     end
-    -- 全域 rawget；方法式 :rawget 對 Kahlua 原生 table 無效（見 Tooltip 同註）
-    return rawget(item:getModData(), key)
+    return item:getModData()
 end
 
-function Cleaner.stampItem(item, key, username)
-    if item and username and username ~= "" then
-        rawset(item:getModData(), key, Cleaner.sanitizeName(username))
+local function modDataForWrite(item)
+    if not item or not item.getModData then
+        return nil
+    end
+    return item:getModData()
+end
+
+-- 解析 KEY_TOUCH 值 → name, epochSeconds。
+-- plain find（第四參數 true）已註冊（StringLib.java:1495-1502），走 String.indexOf
+-- （:900-911），不進 pattern 引擎。
+local function decodeTouch(value)
+    if type(value) ~= "string" or value == "" then
+        return nil, nil
+    end
+    local sep = string.find(value, TOUCH_SEP, 1, true)
+    if not sep then
+        -- 沒有分隔符＝只有名字。不該發生，但別因為格式意外就讓整條章消失
+        return value, nil
+    end
+    return string.sub(value, 1, sep - 1), tonumber(string.sub(value, sep + 1))
+end
+
+-- 讀丟棄者的原始值（新 key 優先；空值／錯型不能遮蔽仍有效的舊 key）
+local function readDropFrom(modData)
+    local value = rawget(modData, Cleaner.KEY_DROP)
+    if type(value) ~= "string" or value == "" then
+        value = rawget(modData, Cleaner.LEGACY_DROPPED)
+    end
+    if type(value) ~= "string" or value == "" then
+        return nil
+    end
+    return value
+end
+
+-- 讀操作者章 → name, epochSeconds
+local function readTouchFrom(modData)
+    local name, at = decodeTouch(rawget(modData, Cleaner.KEY_TOUCH))
+    if name ~= nil and name ~= "" then
+        return name, at
+    end
+    -- 條件是「解不出名字」而**不是**「新 key 不存在」：後者會讓任何寫出空值/壞值的路徑
+    -- 靜默遮蔽舊章，正是本次改動最想避免的失效模式
+    local legacy = rawget(modData, Cleaner.LEGACY_MOVED)
+    if legacy == nil or legacy == "" then
+        return nil, nil
+    end
+    -- 舊章的 at 原樣回傳、不在讀取路徑取整：未遷移物品的顯示不該因為換格式而失真
+    -- （取整只發生在寫入／遷移時，見 touchValueFrom 與 writeTouch）
+    return tostring(legacy), tonumber(rawget(modData, Cleaner.LEGACY_MOVED_AT))
+end
+
+-- 把現有的操作者章（新格式，或由舊 key 升級而來）組成可直接寫入的字串。
+-- **不能直接回傳非空 KEY_TOUCH 原值**：`",123"` 這種壞值（分隔符在最前面、名字為空）雖非
+-- 空字串，但 readTouchFrom 會正確退回 legacy；直接回原值會在 rewriteStamps 清掉三個舊 key
+-- 後永久毀掉仍有效的舊章。
+local function touchValueFrom(modData)
+    local name, at = readTouchFrom(modData)
+    if name == nil or name == "" then
+        return nil
+    end
+    -- 舊章的分鐘取整值在**遷移寫入時**升級成小時，之後才與新章同域、能參與壓縮
+    local hour = toTouchHour(at)
+    return Cleaner.sanitizeName(name) .. TOUCH_SEP .. (hour and tostring(hour) or "")
+end
+
+-- 本 MOD 的兩個 key 一律「先全刪、再按固定順序重插」（drop 先、touch 後）。
+--
+-- 順序是正確性的一部分：modData 序列化直接迭代 KahluaTableImpl 的 LinkedHashMap
+-- （KahluaTableImpl.java:205-231），插入順序決定 byte 序列；CompressIdenticalItems
+-- 逐 byte 比對。若不統一，「先搬再丟」是 touch,drop，「一開始就被丟」是 drop,touch，
+-- 兩群永久分裂。先刪再插也一次清掉三個舊 key，任一次操作即完成整包遷移。
+-- vanilla 其他 key 相對順序不變；本 MOD 的兩個 key 永遠落在尾端、順序固定。
+local function rewriteStamps(modData, dropValue, touchValue)
+    rawset(modData, Cleaner.KEY_DROP, nil)
+    rawset(modData, Cleaner.KEY_TOUCH, nil)
+    rawset(modData, Cleaner.LEGACY_DROPPED, nil)
+    rawset(modData, Cleaner.LEGACY_MOVED, nil)
+    rawset(modData, Cleaner.LEGACY_MOVED_AT, nil)
+    if dropValue then
+        rawset(modData, Cleaner.KEY_DROP, dropValue)
+    end
+    if touchValue then
+        rawset(modData, Cleaner.KEY_TOUCH, touchValue)
     end
 end
 
--- 蓋「最後操作者＋時間」章。時間為 epoch 秒（getTimestamp()，LuaManager.java:9259-9264）
--- **取整到分鐘**：顯示本來只到分，秒級只會把同型物品的壓縮合併（CompressIdenticalItems.java:44-179，
--- 逐 byte 比對含 modData）切得更碎；同批、同分鐘、同人搬的物品仍可合併。
--- 此為維護者拍板的取捨，見 AGENTS.md 踩坑錄 modData 條目。
--- 回傳寫入的時間戳，供 touchAck 把同一個值回推 client，避免兩端各自取時間造成顯示不一致
+-- 讀「最後操作者」章 → name, epochSeconds（at 可能為 nil）。
+-- 新 key 優先；解不出名字才退回舊 key，讓沒再被碰過的舊物品仍看得到章。
+function Cleaner.readTouch(item)
+    local modData = modDataForRead(item)
+    if not modData then
+        return nil, nil
+    end
+    return readTouchFrom(modData)
+end
+
+-- 讀「最後丟棄者」章 → name（新 key 優先，退回舊 key）
+function Cleaner.readDrop(item)
+    local modData = modDataForRead(item)
+    if not modData then
+        return nil
+    end
+    return readDropFrom(modData)
+end
+
+-- 寫入「最後操作者＋時間」章。server 蓋章與 client 收到 touchAck 後的本地寫入共用同一個
+-- 函式，兩端的值格式才不會分岔（0.2.8 的兩端各自取時間就吃過顯示不一致）。
+-- **at 一律在此重新取整**：不變量封在唯一的寫入點，呼叫者傳進未取整的值（異版 client、
+-- 未來新呼叫者）不會靜默讓同批物品再度逐 byte 不同而壓縮失效。
+-- **at 缺失時不鑄造時間**、直接回 nil：要當前時間的是 stampMove，它自己會給。先前用
+-- 本端時鐘補值，等於把 0.2.8 那個「兩端各自取時間」的不一致從後門放回來。
+function Cleaner.writeTouch(item, username, at)
+    local stampAt = toTouchHour(at)
+    if not stampAt or not username or username == "" then
+        return nil
+    end
+    local modData = modDataForWrite(item)
+    if not modData then
+        return nil
+    end
+    rewriteStamps(modData, readDropFrom(modData),
+        Cleaner.sanitizeName(username) .. TOUCH_SEP .. tostring(stampAt))
+    return stampAt
+end
+
+-- 蓋「最後丟棄者」章。與 writeTouch 共用 rewriteStamps，故插入順序與整包遷移行為一致。
+function Cleaner.stampDrop(item, username)
+    if not username or username == "" then
+        return
+    end
+    local modData = modDataForWrite(item)
+    if not modData then
+        return
+    end
+    rewriteStamps(modData, Cleaner.sanitizeName(username), touchValueFrom(modData))
+end
+
+-- 蓋「最後操作者＋時間」章。時間取自 getTimestamp()（LuaManager.java:9259-9264），
+-- 由 writeTouch 取整到小時。回傳寫入的時間戳，供 touchAck 把同一個值回推 client。
 function Cleaner.stampMove(item, username)
-    if not item or not username or username == "" then
-        return nil
-    end
-    local modData = item:getModData()
-    rawset(modData, Cleaner.KEY_MOVED, Cleaner.sanitizeName(username))
-    local at = math.floor(getTimestamp() / 60) * 60
-    rawset(modData, Cleaner.KEY_MOVED_AT, at)
-    return at
+    return Cleaner.writeTouch(item, username, getTimestamp())
 end
 
 -- Kahlua 的 table.sort 是遞迴 quicksort，跑在 coroutine 堆疊上（MAX_STACK_SIZE=3000，

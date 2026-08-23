@@ -307,11 +307,9 @@ local function applyTouchAck(args)
     for _, id in ipairs(ids) do
         local found = index[id]
         if found and found.item then
-            local modData = found.item:getModData()
-            rawset(modData, Cleaner.KEY_MOVED, username)
-            if at then
-                rawset(modData, Cleaner.KEY_MOVED_AT, at)
-            end
+            -- 走 Core 的 writeTouch，與 server 蓋章共用同一套值格式與舊 key 清除，
+            -- 兩端才不會一邊寫新格式、一邊留著舊 key
+            Cleaner.writeTouch(found.item, username, at)
         end
     end
 end

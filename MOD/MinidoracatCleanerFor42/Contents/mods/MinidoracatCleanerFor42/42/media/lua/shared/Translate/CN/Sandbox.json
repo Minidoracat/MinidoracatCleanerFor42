@@ -22,7 +22,7 @@
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup": "散养动物上限（每分组）",
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup_tooltip": "所有清理分组共用的默认散养上限（按分组、按每位玩家附近分别统计）。圈养的（在圈地或鸡舍里）、起过名字的、正被牵着或抱着的都不计入。想给某个分组单独设数值，请用“散养上限覆盖”。\n关于设为 0：它只停用“共用默认值”这一项，实际效果取决于另外三个设置。如果“圈养动物上限”和两个覆盖栏也都是 0 或留空（出厂默认就是这样），动物清理会整套停止；但只要其中任意一项填了正数，扫描就会继续，那些项目照样生效。要明确关闭整套，请关掉上面的“启用动物清理”。",
   "Sandbox_MinidoracatCleanerFor42_AnimalGroupList": "动物清理分组（白名单）",
-  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "允许清理的动物分组。可以填分组 key（例如 rat）、种类 key，或游戏里显示的名称（按服务器语言，例如填“老鼠”）。留空表示使用默认值 rat,mouse,rabbit,chicken。",
+  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "允许清理的动物分组。\n填法：分组 key（例如 rat）、种类 key，或游戏里显示的名称（按服务器语言，例如“老鼠”）。多个用逗号分隔。\n留空：默认 rat,mouse,rabbit,chicken。\n特殊值 * 或 all（不区分大小写）：游戏已知的全部动物分组（含其他 MOD 新增的）。只有本栏认这两个值，下面两个覆盖栏仍然只认具体分组名。\n保护仍然生效：圈养上限、起名／牵抱不会被绕过——all 只扩大“哪些物种可清”。",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides": "散养上限覆盖（按分组）",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides_tooltip": "针对上面“散养动物上限”的分组例外。例如填 rat=20,rabbit=40，表示老鼠用 20、兔子用 40，没列出的分组仍然用默认值。填 0 不是“零容许量”，而是“这个分组的散养完全不清理”。不影响“圈养动物上限”。分组名可以用关键字（例如“老鼠=20”）。",
   "Sandbox_MinidoracatCleanerFor42_AnimalScanRadius": "动物扫描半径",

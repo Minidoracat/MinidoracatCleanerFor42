@@ -3,7 +3,8 @@ require "ISUI/ISToolTipInv"
 
 local Cleaner = MinidoracatCleaner
 
--- 「最後操作時間」格式化：存的是 epoch 秒（UTC、分鐘取整），這裡用 Calendar.getInstance()
+-- 「最後操作時間」：存的是 epoch 秒（UTC）。新章是小時整點，0.3.0 舊章可能是分鐘取整，
+-- 兩種都要能顯示（讀取路徑不改舊值，見 Core readTouchFrom）。用 Calendar.getInstance()
 -- 落在**客戶端本地時區**——不能用 os.date，Kahlua 的 OsLib 把時區寫死成 UTC（OsLib.java:331）。
 -- Calendar 是 PZCalendar 薄包裝的暴露別名（LuaManager.java:1548-1567,2430），SimpleDateFormat
 -- 於 LuaManager.java:1699 暴露；vanilla 同款用法：MapSpawnSelect.lua:542-543（SimpleDateFormat.new
@@ -18,10 +19,18 @@ local function formatMovedAt(at)
         -- 失敗不值得賠掉整個 tooltip（render 覆寫一炸＝所有物品無提示，正式服踩過同型坑）：
         -- pcall 包住，退化成只顯示名字不顯示時間
         local ok, text = pcall(function()
-            timeFormatter = timeFormatter or SimpleDateFormat.new("yyyy-MM-dd HH:mm", Locale.ENGLISH)
+            timeFormatter = timeFormatter
+                or SimpleDateFormat.new("yyyy-MM-dd HH:mm", Locale.ENGLISH)
             local cal = Calendar.getInstance()
             cal:setTimeInMillis(at * 1000)
-            return timeFormatter:format(cal:getTime())
+            local formatted = timeFormatter:format(cal:getTime())
+            if at % 3600 == 0 then
+                -- 合併格式的新章是 UTC epoch hour bucket，不是「本地整點」。UTC+5:30 等時區下
+                -- UTC 整點會落在本地 :30；硬寫 HH:00 會真的顯示錯時間。保留 Calendar 算出的
+                -- 真實本地分鐘，前綴 `~` 明示「這是約略的小時區間，不是分鐘精確值」。
+                return "~" .. formatted
+            end
+            return formatted
         end)
         timeCacheAt = at
         timeCacheText = ok and text or nil
@@ -44,22 +53,17 @@ local function getTraceLines(item)
     if not item or not item.hasModData or not item:hasModData() then
         return nil
     end
-    local modData = item:getModData()
-    -- modData 是 Kahlua 原生 table：只能用全域 rawget(t,k)，方法式 t:rawget(k) 是 table 索引查找→call nil 爆錯
-    local dropped = rawget(modData, Cleaner.KEY_DROPPED)
-    local moved = rawget(modData, Cleaner.KEY_MOVED)
-    local hasDropped = dropped ~= nil and dropped ~= ""
-    local hasMoved = moved ~= nil and moved ~= ""
-    if not hasDropped and not hasMoved then
+    local dropped = Cleaner.readDrop(item)
+    local moved, at = Cleaner.readTouch(item)
+    if dropped == nil and moved == nil then
         return nil
     end
     local lines = {}
-    if hasDropped then
-        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastDropped"), tostring(dropped) }
+    if dropped then
+        lines[#lines + 1] = { getText("IGUI_MinidoracatCleaner_LastDropped"), dropped }
     end
-    if hasMoved then
-        local value = tostring(moved)
-        local at = tonumber(rawget(modData, Cleaner.KEY_MOVED_AT))
+    if moved then
+        local value = moved
         if at then
             local timeText = formatMovedAt(at)
             if timeText then

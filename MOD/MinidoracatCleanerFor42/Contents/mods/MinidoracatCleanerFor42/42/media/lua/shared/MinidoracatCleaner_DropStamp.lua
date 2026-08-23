@@ -13,7 +13,7 @@ local Cleaner = MinidoracatCleaner
 local function stamp(item, character)
     -- TouchTraceEnabled 只關 stamp，不關 markDirty（dirty queue 屬功能二，不受追蹤開關影響）
     if item and character and Cleaner.getOption("TouchTraceEnabled") ~= false then
-        Cleaner.stampItem(item, Cleaner.KEY_DROPPED, character:getUsername())
+        Cleaner.stampDrop(item, character:getUsername())
         -- 丟棄也是一次「操作」：兩章同步蓋，tooltip 的操作者/時間才不會停在上一手
         Cleaner.stampMove(item, character:getUsername())
     end

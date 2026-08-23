@@ -22,7 +22,7 @@
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup": "野良動物の上限（グループごと）",
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup_tooltip": "全グループ共通の野良動物の既定上限（グループごと、各プレイヤー周辺）。飼育（ゾーン／小屋）・命名済み・抱えられている、または繋がれている動物は対象外。特定グループに別の値を使うには「野良上限の上書き」を使用。\n0 にした場合：無効になるのはこの共通の既定値だけで、実際の挙動は他の 3 つの設定によって決まります。「飼育動物の上限」と 2 つの上書き欄もすべて 0 または空（出荷時の既定）なら、動物整理は完全に停止します。ただしいずれかに正の数が入っていればスキャンは継続し、それらの設定はそのまま有効です。全体を明示的に止めるには上の「動物整理を有効化」をオフにしてください。",
   "Sandbox_MinidoracatCleanerFor42_AnimalGroupList": "動物整理グループ（許可リスト）",
-  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "整理可能な動物グループ。キーワード対応：グループ key（rat）、種類 key、または翻訳名（サーバー言語に依存）。空欄＝既定 rat,mouse,rabbit,chicken。",
+  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "整理可能な動物グループ。\n書き方：グループ key（rat）、種類 key、または翻訳名（サーバー言語）。複数はカンマ区切り。\n空欄：既定 rat,mouse,rabbit,chicken。\n特殊値 * または all（大文字小文字不問）：ゲームが知っている全グループ（他 MOD 追加分も含む）。この欄だけが対応し、下の 2 つの上書き欄は具体的なグループ名のみ受け付けます。\n保護はそのまま：飼育上限・命名／抱え／繋がれは迂回されない——all は「どの種を整理対象にするか」を広げるだけ。",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides": "野良上限の上書き（グループ別）",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides_tooltip": "上の「野良動物の上限」に対するグループ別の例外。例えば rat=20,rabbit=40 と書くと、ネズミは 20、ウサギは 40 になり、記載しないグループは既定値のままです。0 は「許容ゼロ」ではなく「そのグループの野良は一切整理しない」という意味です。「飼育動物の上限」には影響しません。グループ名はキーワードでも指定できます（例：「ネズミ=20」）。",
   "Sandbox_MinidoracatCleanerFor42_AnimalScanRadius": "動物スキャン半径",

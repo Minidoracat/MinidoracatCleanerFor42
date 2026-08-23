@@ -126,7 +126,7 @@ local function touchItems(playerObj, args)
         local found = index[id]
         -- 只蓋容器內物品：地板物品的章由丟棄路徑負責（DropStamp），且撿進背包後即屬 container
         if found and found.kind == "container" and found.item then
-            local previous = Cleaner.getItemModDataValue(found.item, Cleaner.KEY_MOVED)
+            local previous = Cleaner.readTouch(found.item)
             if previous and previous ~= sanitizedName then
                 overwritten = overwritten + 1
             end

@@ -1,5 +1,6 @@
 --[[
-用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua，跑二十六個情境並斷言結果。
+用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
+DropStamp.lua / Client.lua / Tooltip.lua，跑三十七個情境並斷言結果。
 
     lua scripts/smoke_scanner.lua        （在 repo 根目錄執行）
 
@@ -44,6 +45,31 @@
 情境二十四：物品清理的分類總開關（關閉時連超標也不動，重新開啟後要恢復）
 情境二十五：單一熱點落盤失敗不得牽連其他熱點，例外仍要可見，且已寫出的熱點不得被重放
 情境二十六：刪除爆發中途被停用時，已刪除的部分仍要落盤（落盤的第二個出口）
+情境二十七：章的欄位精簡與舊格式遷移——同一小時同一人的章必須逐 byte 相同（容器封包的
+            CompressIdenticalItems 命中前提）、寫新 key 要就地刪舊 key、舊存檔的章仍讀得到，
+            且名字裡的欄位分隔符不得用來偽造時間
+情境二十八：分桶判定必須讀新 MIC42_d 與舊 lastDroppedBy；少任一路徑就會把玩家丟棄物誤分
+            到高容忍桶，而原 fixture 全用舊 key 時這個迴歸會靜默穿過
+情境二十九：touch 指令的完整 server 呼叫鏈——首次蓋章、覆蓋偵測、touch_overwrite 聚合 log、
+            touchAck 的 server 整點值；釘住 Commands.lua 的 readTouch 呼叫點
+情境三十：不同操作歷史最後必須以同一順序插入 MIC42_d→MIC42_t；順序是
+          CompressIdenticalItems 逐 byte 比對的一部分
+情境三十一：AnimalGroupList 的 `*`／`all` 解析語意（Core 層純函式）
+情境三十二：AnimalScanner 的真實掃描——`*` 讓未列群組進清理（釘住 sentinel 消費點）、
+            remove 跨 tick 攤平且單 tick 不超過 ANIMALS_PER_TICK、總量仍等於
+            ANIMALS_PER_ROUND、NaN 座標跳過並留診斷、清理中關掉開關要停手且已刪部分落盤
+情境三十三：server 端 drop 路徑（OnProcessTransaction）真的寫新章格式且不留舊 key；
+            釘住 DropStamp 的 stampDrop／stampMove 呼叫點（改名漏改只有實機才炸）
+情境三十四：多個 bucket ＝ 多個 job——佇列要逐個推進（Kahlua 上 `#` 會因就地設 nil 而回 0
+            的最小反例形態）、每輪額度跨 job 分配、每個 job 各一行 animal_clean，
+            以及「額度用盡而根本沒被嘗試的 job」不得寫 animal_protected_over
+情境三十五：client 端 touchAck 走 Core 的 writeTouch，寫新章格式且不留舊 key
+            （第 1 輪點出的 client 半邊覆蓋缺口）
+情境三十六：recount 邊界——原候選走出原玩家半徑後不再計入舊 bucket；單一 plan
+            超過 visit budget 時 fail-closed 不刪並寫 animal_recount_unprovable；
+            stray／zone 兩份 plan 各有 NaN 時 animal_nan 的 skipped 要加總
+情境三十七：Tooltip client 消費端真的讀新章——有章物品走自訂 render、無章物品退回原 render，
+            小時章會進 Calendar/SimpleDateFormat 格式化路徑
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -62,10 +88,16 @@ local MEDIA = "MOD/MinidoracatCleanerFor42/Contents/mods/MinidoracatCleanerFor42
 -- 起始時間必須大於掃描間隔：queuePeriodicScan 的條件是 now - lastPeriodicAt >= interval，
 -- 而 lastPeriodicAt 初值為 0。遊戲裡 getTimestampMs() 本來就是很大的系統時間
 local nowMs = 5000000
+-- epoch 秒（getTimestamp()，LuaManager.java:9259-9264）。刻意與 nowMs 分開：
+-- 遊戲裡本來就是不同時鐘。STAMP_HOUR 是測試常數（刻意不用 local：main chunk 已逼近
+-- Lua/Kahlua 的 200 locals 上限），情境 27-30 用來驗證小時取整。
+STAMP_HOUR = 1787479200
+local nowSec = STAMP_HOUR
 local logLines = {}
 local sentCommands = {}
 
 function getTimestampMs() return nowMs end
+function getTimestamp() return nowSec end
 function isClient() return false end
 function isServer() return true end
 function writeLog(_, text) logLines[#logLines + 1] = text end
@@ -77,7 +109,19 @@ end
 function sendRemoveItemFromContainer() end
 function getText(key) return key end
 
-DesignationZoneAnimal = { removeItemFromGround = function() end }
+-- getAllZones 供 AnimalScanner 的 buildZoneCache 用。刻意不透過 javaList（它在下面才宣告，
+-- 這裡的 closure 抓不到），自己回 java 風格容器。預設無圈地，動物情境自行填 ANIMAL_ZONES
+ANIMAL_ZONES = {}
+DesignationZoneAnimal = {
+    removeItemFromGround = function() end,
+    getAllZones = function()
+        local items = ANIMAL_ZONES
+        return {
+            size = function() return #items end,
+            get = function(_, i) return items[i + 1] end,
+        }
+    end,
+}
 
 -- 這兩個開關供負面測試切換：保險屋拒絕、以及玩家沒有所在格
 local safehouseAllows = true
@@ -108,13 +152,21 @@ SandboxVars = {
 }
 
 local tickHandlers, clientCommandHandlers, worldMenuHandlers = {}, {}, {}
+-- OnGameStart／OnProcessTransaction 供 DropStamp 的 server 端 drop 路徑用；
+-- OnServerCommand／OnCreatePlayer 供 Client／Tooltip 的 client 消費端用。
+-- 全域而非 local：main chunk 的 200 locals 額度已滿（見檔頭 STAMP_HOUR 同註）
+GAME_START_HANDLERS, TRANSACTION_HANDLERS, SERVER_COMMAND_HANDLERS, CREATE_PLAYER_HANDLERS = {}, {}, {}, {}
 Events = setmetatable({}, {
     __index = function(_, name)
         return {
             Add = function(fn)
                 if name == "OnTick" then tickHandlers[#tickHandlers + 1] = fn
                 elseif name == "OnClientCommand" then clientCommandHandlers[#clientCommandHandlers + 1] = fn
-                elseif name == "OnFillWorldObjectContextMenu" then worldMenuHandlers[#worldMenuHandlers + 1] = fn end
+                elseif name == "OnFillWorldObjectContextMenu" then worldMenuHandlers[#worldMenuHandlers + 1] = fn
+                elseif name == "OnGameStart" then GAME_START_HANDLERS[#GAME_START_HANDLERS + 1] = fn
+                elseif name == "OnProcessTransaction" then TRANSACTION_HANDLERS[#TRANSACTION_HANDLERS + 1] = fn
+                elseif name == "OnServerCommand" then SERVER_COMMAND_HANDLERS[#SERVER_COMMAND_HANDLERS + 1] = fn
+                elseif name == "OnCreatePlayer" then CREATE_PLAYER_HANDLERS[#CREATE_PLAYER_HANDLERS + 1] = fn end
             end,
         }
     end,
@@ -187,6 +239,14 @@ end
 
 function getCell()
     return {
+        -- IsoCell.getAnimals()。預設 nil（＝世界沒有動物清單），既有情境因此完全不受
+        -- AnimalScanner 的 onTick 影響；動物情境自行填 ANIMAL_ROSTER
+        getAnimals = function()
+            if not ANIMAL_ROSTER then
+                return nil
+            end
+            return javaList(ANIMAL_ROSTER)
+        end,
         getGridSquare = function(_, x, y, z)
             gridLookups = gridLookups + 1
             local cx, cy = math.floor(x / 8), math.floor(y / 8)
@@ -231,10 +291,13 @@ function getCell()
 end
 
 local nextID = 1000
-local function makeItem(fullType, dropper)
+-- dropper 章一律以新格式（MIC42_d）建立。情境一到二十六必須跑真實寫入形狀，
+-- 否則只練到 readDrop 的 legacy fallback（review：改回只讀舊 key 時 27 情境全綠）。
+-- 舊格式相容讀取由 makeLegacyItem 與情境二十七⑥⑦、二十八覆蓋。
+local function makeItemWith(fullType, dropKey, dropper)
     nextID = nextID + 1
     local modData = {}
-    if dropper then modData.MIC42_lastDroppedBy = dropper end
+    if dropper then modData[dropKey] = dropper end
     return {
         _id = nextID, _fullType = fullType, _modData = modData, _favorite = false, _container = nil,
         getID = function(self) return self._id end,
@@ -245,6 +308,15 @@ local function makeItem(fullType, dropper)
         setWorldItem = function() end,
         getContainer = function(self) return self._container end,
     }
+end
+
+local function makeItem(fullType, dropper)
+    return makeItemWith(fullType, "MIC42_d", dropper)
+end
+
+-- 0.3.0 舊格式 fixture：釘住「沒再被碰過的舊物品」的相容讀取（分桶與顯示）
+local function makeLegacyItem(fullType, dropper)
+    return makeItemWith(fullType, "MIC42_lastDroppedBy", dropper)
 end
 
 -- 哪張 overlay 屬於哪些底圖（ContainerOverlays.java:87-113 建的反查表）。
@@ -378,6 +450,9 @@ local player = {
 local onlineRoster = nil
 function getOnlinePlayers() return javaList(onlineRoster or { player }) end
 function getPlayer() return player end
+-- Client.lua 的 applyTouchAck 走 getSpecificPlayer(0..3) 找「名字對上的本機子玩家」
+-- （分割畫面）。單一玩家的 harness 只要 index 0 回 player 即可
+function getSpecificPlayer(index) return index == 0 and player or nil end
 
 -- ===== 載入受測程式碼 =====
 local loaded = {}
@@ -393,9 +468,76 @@ function require(name)
     error("require 找不到: " .. name)
 end
 
+-- ===== 動物 mock（必須在 require AnimalScanner 之前就位）=====
+-- 全域而非 local：main chunk 已逼近 Lua/Kahlua 的 200 locals 上限（見 STAMP_HOUR 同註）
+ANIMAL_ROSTER = nil
+-- Core 的 buildAnimalNameIndex 讀 `.animals` 的 `group` 欄位；AnimalScanner 的
+-- getAnimalGroup 走 getDef():getGroup()。兩種形式都要有，否則只練到其中一條
+ANIMAL_GROUPS = { rattus = "rat", hen = "chicken", doe = "deer", sow = "pig" }
+AnimalDefinitions = { animals = {} }
+for atype, group in pairs(ANIMAL_GROUPS) do
+    AnimalDefinitions.animals[atype] = { group = group }
+end
+function AnimalDefinitions.getDef(atype)
+    local group = ANIMAL_GROUPS[atype]
+    if not group then
+        return nil
+    end
+    return { getGroup = function() return group end }
+end
+
+-- vanilla 動作類的最小 stub：installDropHooks 會 deref 它們的方法再包一層，
+-- 缺任一個就會在安裝階段 nil-deref 而讓整個 hook 註冊中斷（DropStamp 自己的註解已提過
+-- ISGrabItemAction 那條，這裡把 shared/ 的三個補上）
+ISDropWorldItemAction = { complete = function() return true end }
+ISDropVehicleItemAction = { complete = function() return true end }
+ISTransferAction = { transferItem = function() return nil end }
+
+ANIMAL_REMOVED = {}
+-- opts：id / atype / x / y / wild / baby / hutch / dzone / named
+function makeTestAnimal(opts)
+    local gone = false
+    local animal
+    animal = {
+        _opts = opts,
+        isGone = function() return gone end,
+        getAnimalID = function() return opts.id end,
+        getOnlineID = function() return opts.id end,
+        getAnimalType = function() return opts.atype end,
+        -- 座標刻意每次現算：NaN 情境要能在掃描之後才讓座標壞掉
+        getX = function() return opts.x end,
+        getY = function() return opts.y end,
+        -- z 也要可變：NaN 防護必須三軸都查（vanilla 的比較器把 x/y/z 都送進距離計算），
+        -- 寫死 0 的話「只有 z 壞掉」那個變異不會被任何斷言抓到
+        getZ = function() return opts.z or 0 end,
+        isWild = function() return opts.wild == true end,
+        isBaby = function() return opts.baby == true end,
+        isDead = function() return gone end,
+        getSquare = function() return gone and nil or getOrMakeSquare(100, 100, 0) end,
+        getCustomName = function() return opts.named end,
+        isOnHook = function() return false end,
+        getData = function() return nil end,
+        isHeld = function() return false end,
+        getVehicle = function() return nil end,
+        getHutch = function() return opts.hutch end,
+        getDZone = function() return opts.dzone end,
+        remove = function()
+            gone = true
+            ANIMAL_REMOVED[#ANIMAL_REMOVED + 1] = opts.id
+        end,
+    }
+    return animal
+end
+
 require "MinidoracatCleaner_Core"
 require "MinidoracatCleaner_WorldScanner"
 require "MinidoracatCleaner_Commands"
+-- AnimalScanner：本次新增的 `*`／`all` sentinel 消費點與 remove 分幀都在它的 onTick 裡，
+-- 不載入就只能靠測試自己複製判定式（review 抓到的空轉假通過）。ANIMAL_ROSTER 預設 nil，
+-- 所以它掛進 tickHandlers 後對既有情境是 no-op。
+require "MinidoracatCleaner_AnimalScanner"
+-- DropStamp：server 端 drop 路徑的 stampDrop／stampMove 呼叫點（改名漏改只有實機才炸）
+require "MinidoracatCleaner_DropStamp"
 
 -- ===== 測試工具 =====
 local failures = 0
@@ -410,13 +552,79 @@ local function runTicks(count)
     end
 end
 
+-- ===== 動物情境共用 helper =====
+-- 全域函式而非 local：main chunk 已達 Lua 的 200 locals 硬上限（見 STAMP_HOUR 同註），
+-- 而情境三十二、三十四都要用同一組工具。定義位置在 runTicks 之後才捕獲得到它
+function countLogEvent(name)
+    local total = 0
+    for _, line in ipairs(logLines) do
+        if line:find("[" .. name .. "]", 1, true) then
+            total = total + 1
+        end
+    end
+    return total
+end
+
+-- 只數動物警告，避免 WorldScanner 的 `[warn] kind=items` 讓生命週期斷言假紅／假綠
+function countAnimalWarn()
+    local total = 0
+    for _, line in ipairs(logLines) do
+        if line:find("[warn]", 1, true) and line:find("kind=animals", 1, true) then
+            total = total + 1
+        end
+    end
+    return total
+end
+
+-- specs：{ { atype = "sow", count = 15, hutch = true }, ... }
+-- hutch 為真 ⇒ getHutch() 非 nil ⇒ classifyAnimal 回 "zone"（圈養路徑，不必建圈地）
+function seedAnimals(specs)
+    ANIMAL_ROSTER = {}
+    ANIMAL_REMOVED = {}
+    local nextId = 9000
+    for _, spec in ipairs(specs) do
+        for _ = 1, spec.count do
+            nextId = nextId + 1
+            ANIMAL_ROSTER[#ANIMAL_ROSTER + 1] = makeTestAnimal({
+                id = nextId,
+                atype = spec.atype,
+                x = 100,
+                y = 100,
+                hutch = spec.hutch and {} or nil,
+            })
+        end
+    end
+end
+
+-- 存活隻數；帶 atype 只數該類型
+function liveAnimals(atype)
+    local total = 0
+    for _, animal in ipairs(ANIMAL_ROSTER or {}) do
+        if not animal.isGone() and (atype == nil or animal._opts.atype == atype) then
+            total = total + 1
+        end
+    end
+    return total
+end
+
+-- 清掉 warned：暫時把動物清單抽空跑一 tick，buckets 全空 ⇒ runAnimalScan 尾端的 stale
+-- 回收會清掉所有警告記錄。不動 sandbox 上限，所以不會與情境自己的設定打架。
+-- 少了這步，後一個子情境會沿用前一個的 warned 而在第一輪就直接確認（前提會漂）
+function resetAnimalWarned()
+    local saved = ANIMAL_ROSTER
+    ANIMAL_ROSTER = {}
+    runTicks(1)
+    ANIMAL_ROSTER = saved
+end
+
 local function countFloor(fullType, stamped)
     local total = 0
     for _, square in pairs(world) do
         for _, worldObj in ipairs(square._objs) do
             local item = worldObj:getItem()
             if item:getFullType() == fullType then
-                local has = rawget(item:getModData(), "MIC42_lastDroppedBy") ~= nil
+                -- 走生產用的 readDrop（新舊 key 皆認），fixture 換格式時這裡不用跟著改
+                local has = MinidoracatCleaner.readDrop(item) ~= nil
                 if stamped == nil or has == stamped then total = total + 1 end
             end
         end
@@ -792,6 +1000,33 @@ end
 
 for _, h in ipairs(hits) do print("        " .. h) end
 check(#hits == 0, "沒有使用 Kahlua 不存在的全域（next／assert／xpcall）")
+
+-- 同一類「harness 跑標準 Lua 所以永遠測不到」的 Kahlua 差異：**佇列不得就地設 nil**。
+-- Kahlua 的 rawset(k, nil) 會從底層 LinkedHashMap 刪掉該 key（KahluaTableImpl.java:59-62），
+-- 而 `#` 走 KahluaUtil.len 的二分搜尋、上界只有 2*size（:147-148 → KahluaUtil.java:436-457）
+-- ——t[1] 一旦不存在就回 0。標準 Lua 的 luaH_getn 看 t[#array] 非 nil 即回長度，所以
+-- 「跑得過測試」完全不代表在遊戲裡正確。實際踩過：移除佇列消化完第一個 job 後把該槽設 nil，
+-- 於是 `#removalQueue` 變 0、第二個以後的 job 被整表丟棄且從未落盤。
+-- 正解是只推進 head、排空時整表重置（WorldScanner 的 deleteQueue 同款）。
+local queueHits = {}
+for _, rel in ipairs(SOURCES) do
+    local fh = io.open(MEDIA .. "/" .. rel)
+    if fh then
+        local lineNo = 0
+        for line in fh:lines() do
+            lineNo = lineNo + 1
+            local code = line:match("^(.-)%-%-") or line
+            -- `<某某>Queue[ ... ] = nil`
+            if code:find("[%w_]+[Qq]ueue%s*%[[^%]]*%]%s*=%s*nil") then
+                queueHits[#queueHits + 1] = rel .. ":" .. lineNo
+            end
+        end
+        fh:close()
+    end
+end
+for _, h in ipairs(queueHits) do print("        " .. h) end
+check(#queueHits == 0,
+    "沒有對佇列就地設 nil（Kahlua 的 # 會因此回 0，把後續項目靜默丟棄）")
 
 -- ===== 情境七：生成選單的預設值 =====
 -- 上面的 SandboxVars 存根**故意**不含 DebugMenuEnabled，走的正是「新存檔／管理員沒設過」
@@ -2118,6 +2353,876 @@ check(countAutoClean("Base.ProbeDisable") == 1,
 sandbox.ItemCleanupEnabled = true
 sandbox.MaxFloorItemsPerType = savedChunk26
 sandbox.MaxFloorItemsPerTypeArea = savedArea26
+
+print()
+do
+print("情境二十七：章的欄位精簡與舊格式遷移")
+-- 核心性質：同一小時同一人的章必須逐 byte 相同（CompressIdenticalItems 命中前提）。
+local Stamp = MinidoracatCleaner
+local savedSec27 = nowSec
+
+-- ① 核心性質：同一小時內的兩次蓋章必須產生完全相同的值。
+--    刻意讓兩次相差 61 秒——若時間取整退回分鐘精度，值就會不同、本條轉紅。
+--    這是唯一真正防止迴歸的斷言，不可改成同一秒（同一秒下分鐘與小時精度都會通過）
+nowSec = STAMP_HOUR
+local itemA27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemA27, "ryan")
+local valA27 = rawget(itemA27:getModData(), Stamp.KEY_TOUCH)
+nowSec = STAMP_HOUR + 61
+local itemB27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemB27, "ryan")
+check(valA27 ~= nil and valA27 == rawget(itemB27:getModData(), Stamp.KEY_TOUCH),
+    "同一小時內同一人的章逐 byte 相同（相差 61 秒；分鐘精度會轉紅）")
+
+-- ② 活性：跨小時必須不同。少了這條，①有可能只是因為時間根本沒被寫進值裡
+nowSec = STAMP_HOUR + 3601
+local itemC27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemC27, "ryan")
+check(rawget(itemC27:getModData(), Stamp.KEY_TOUCH) ~= valA27,
+    "跨小時的章不同（活性：證明時間真的寫進值裡，不是常數）")
+
+-- ③ 活性：不同操作者必須不同
+nowSec = STAMP_HOUR
+local itemD27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemD27, "dandankk")
+check(rawget(itemD27:getModData(), Stamp.KEY_TOUCH) ~= valA27,
+    "不同操作者的章不同（活性：證明名字真的寫進值裡）")
+
+-- ④ 任一次操作要一次遷移**三個**舊 key。容器搬動本來只改 mover，但舊 dropper 若留著，
+--    就會與已完整遷移的同型物品永久分裂；CHANGELOG「下次搬動自動換格式」也會變假話
+local itemE27 = makeItem("Base.StampProbe")
+itemE27._modData[Stamp.LEGACY_DROPPED] = "legacydropper"
+itemE27._modData[Stamp.LEGACY_MOVED] = "olduser"
+itemE27._modData[Stamp.LEGACY_MOVED_AT] = 1787400000
+Stamp.stampMove(itemE27, "ryan")
+check(rawget(itemE27:getModData(), Stamp.LEGACY_DROPPED) == nil
+        and rawget(itemE27:getModData(), Stamp.LEGACY_MOVED) == nil
+        and rawget(itemE27:getModData(), Stamp.LEGACY_MOVED_AT) == nil
+        and rawget(itemE27:getModData(), Stamp.KEY_DROP) == "legacydropper",
+    "搬動一次即遷移丟棄者＋操作者＋時間三個舊 key（dropper 已轉 MIC42_d）")
+
+-- ⑤ round-trip：解析回來要拿得到名字與小時整點
+local nameE27, atE27 = Stamp.readTouch(itemE27)
+check(nameE27 == "ryan" and atE27 == STAMP_HOUR,
+    "新格式 round-trip（實際 " .. tostring(nameE27) .. " / " .. tostring(atE27) .. "）")
+
+-- ⑥ 舊存檔的章仍讀得到——換格式不能讓既有紀錄消失
+local itemF27 = makeItem("Base.StampProbe")
+itemF27._modData[Stamp.LEGACY_MOVED] = "olduser"
+itemF27._modData[Stamp.LEGACY_MOVED_AT] = 1787400060
+local nameF27, atF27 = Stamp.readTouch(itemF27)
+check(nameF27 == "olduser" and atF27 == 1787400060,
+    "0.3.0 舊 key 仍讀得到（沒再被碰過的物品不會憑空失去章）")
+
+-- ⑦ 丟棄者章：舊 key 讀得到，蓋新章後改讀新 key 且舊 key 已刪
+local itemG27 = makeLegacyItem("Base.StampProbe", "legacydropper")
+check(Stamp.readDrop(itemG27) == "legacydropper", "丟棄者舊 key 仍讀得到")
+Stamp.stampDrop(itemG27, "newdropper")
+check(Stamp.readDrop(itemG27) == "newdropper"
+        and rawget(itemG27:getModData(), Stamp.LEGACY_DROPPED) == nil,
+    "蓋新丟棄者章後改讀新 key、舊 key 已刪")
+
+-- ⑧ 名字裡的欄位分隔符必須在寫入點就被清掉，否則能偽造時間欄位、或讓解析取到錯的名字。
+--    分隔符是 `,`：PZ 引擎層本來就拒收含它的 username（ServerWorldDatabase.java:769），
+--    sanitizeName 是第二層，把它換成空白，於是 decode 找到的仍是真正的時間戳
+local itemH27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemH27, "evil,9999999999")
+local nameH27, atH27 = Stamp.readTouch(itemH27)
+check(nameH27 ~= nil and nameH27:find(",", 1, true) == nil and atH27 == STAMP_HOUR,
+    "名字裡的 , 被清掉，無法偽造時間欄位（解析出 " .. tostring(nameH27) .. " / " .. tostring(atH27) .. "）")
+nowSec = savedSec27
+end
+
+do
+local Stamp = MinidoracatCleaner
+local savedSec27Edges = nowSec
+nowSec = STAMP_HOUR
+
+-- ⑨ 新 key 壞值不能遮蔽仍有效的舊 key（readDropFrom / touchValueFrom 的 fail-soft）
+local itemI27 = makeLegacyItem("Base.StampProbe", "legacydropper")
+itemI27._modData[Stamp.KEY_DROP] = ""
+check(Stamp.readDrop(itemI27) == "legacydropper", "空 MIC42_d 不遮蔽仍有效的 legacy dropper")
+local itemJ27 = makeItem("Base.StampProbe")
+itemJ27._modData[Stamp.KEY_TOUCH] = ",123"
+itemJ27._modData[Stamp.LEGACY_MOVED] = "oldmover"
+itemJ27._modData[Stamp.LEGACY_MOVED_AT] = STAMP_HOUR + 60
+Stamp.stampDrop(itemJ27, "dropper")
+local nameJ27, atJ27 = Stamp.readTouch(itemJ27)
+check(nameJ27 == "oldmover" and atJ27 == STAMP_HOUR
+        and rawget(itemJ27._modData, Stamp.LEGACY_MOVED) == nil,
+    "壞 MIC42_t 不遮蔽 legacy mover；下一次操作保留舊章、取整並完成遷移")
+
+-- ⑩ writeTouch 缺 at 必須 fail-closed，不得用 client 本端時鐘鑄造與 server 不同的章
+local itemK27 = makeItem("Base.StampProbe")
+Stamp.stampMove(itemK27, "server")
+local beforeK27 = rawget(itemK27._modData, Stamp.KEY_TOUCH)
+check(Stamp.writeTouch(itemK27, "client", nil) == nil
+        and rawget(itemK27._modData, Stamp.KEY_TOUCH) == beforeK27,
+    "writeTouch 缺 at 直接不寫，保留 server 原章（不從 client 時鐘補值）")
+
+-- ⑪ 遷移路徑也必須消毒 legacy 名字。0.3.0 寫入的章沒有本版的分隔符保證（手改存檔、
+--    異版 client 都可能留下含 `,` 的名字）；touchValueFrom 若直接串接，decode 會在
+--    第一個分隔符切斷 → 名字截成 `a`、tonumber("b,<hour>") 得 nil 而時間永久掉失。
+--    這條在 touchValueFrom 少掉 sanitizeName 時轉紅。
+local itemL27 = makeItem("Base.StampProbe")
+itemL27._modData[Stamp.LEGACY_MOVED] = "a,b"
+itemL27._modData[Stamp.LEGACY_MOVED_AT] = STAMP_HOUR
+Stamp.stampDrop(itemL27, "dropper")
+local nameL27, atL27 = Stamp.readTouch(itemL27)
+check(nameL27 == "a b" and atL27 == STAMP_HOUR,
+    "遷移時 legacy 名字也過 sanitizeName（實際 " .. tostring(nameL27) .. " / " .. tostring(atL27) .. "）")
+
+nowSec = savedSec27Edges
+end
+
+print()
+do
+local Stamp = MinidoracatCleaner
+print("情境二十八：分桶呼叫點讀新 key（isHighTolerance）")
+-- review 抓到的覆蓋空白（實測確認）：把 isHighTolerance 改回只讀 LEGACY_DROPPED，
+-- 原本 27 個情境全綠——因為 fixture 全寫舊 key。fixture 已改寫新 key（情境一的整合
+-- 路徑現在跑新格式），這裡再對呼叫點語意做直接斷言：四種輸入各釘一條。
+local hiSet28 = Stamp.getHighToleranceMatcher()
+check(Stamp.isHighTolerance(hiSet28, makeItem("Base.BucketProbe", "ryan"), "Base.BucketProbe", true) == false,
+    "新 key（MIC42_d）有章 → 一般桶（變異「改回只讀舊 key」時本條轉紅）")
+check(Stamp.isHighTolerance(hiSet28, makeLegacyItem("Base.BucketProbe", "ryan"), "Base.BucketProbe", true) == false,
+    "舊 key（lastDroppedBy）有章 → 一般桶（0.3.0 存檔相容）")
+check(Stamp.isHighTolerance(hiSet28, makeItem("Base.BucketProbe", nil), "Base.BucketProbe", true) == true,
+    "無章 → 高容忍桶")
+check(Stamp.isHighTolerance(hiSet28, makeItem("Base.BucketProbe", "ryan"), "Base.BucketProbe", false) == false,
+    "追蹤關閉 → fail-closed：不看章一律一般桶")
+end
+
+print()
+do
+local Stamp = MinidoracatCleaner
+local savedSec29 = nowSec
+print("情境二十九：touch 指令的覆蓋偵測與 ack（Commands 呼叫點）")
+-- Commands.lua touchItems 的 readTouch 呼叫點先前零覆蓋（review Important 1）。
+-- 流程：tester 先蓋 → rival 覆蓋 → 斷言 touch_overwrite log 與 touchAck payload。
+-- 節流 key 是 command:username（Commands.lua:190），兩位玩家不互擋。
+local rivalInv29 = makeContainer("player")
+local rival29 = {
+    getX = function() return playerX end,
+    getY = function() return playerY end,
+    getZ = function() return playerZ end,
+    getUsername = function() return "rival" end,
+    getOnlineID = function() return 2 end,
+    getCurrentSquare = function() return getOrMakeSquare(100, 100, 0) end,
+    getInventory = function() return rivalInv29 end,
+    isEquipped = function() return false end,
+    isAttachedItem = function() return false end,
+}
+local shelf29 = makeContainer("furniture")
+putFurniture(100, 100, 0, shelf29)
+local probe29 = shelf29:add(makeItem("Base.TouchProbe"))
+nowSec = STAMP_HOUR
+local logBase29 = #logLines
+local sentBase29 = #sentCommands
+
+for _, fn in ipairs(clientCommandHandlers) do
+    fn("MinidoracatCleaner", "touch", player, { ids = { probe29:getID() } })
+end
+local n29, at29 = Stamp.readTouch(probe29)
+check(n29 == "tester" and at29 == STAMP_HOUR, "tester 蓋章成功且時間為整點（實際 "
+    .. tostring(n29) .. " / " .. tostring(at29) .. "）")
+local function countOverwriteSince29(base)
+    local n = 0
+    for i = base + 1, #logLines do
+        if logLines[i]:find("touch_overwrite", 1, true) then n = n + 1 end
+    end
+    return n
+end
+check(countOverwriteSince29(logBase29) == 0, "首次蓋章（無前手）不寫 touch_overwrite")
+
+nowMs = nowMs + 1100   -- 過 touch:rival 自己的節流窗（不同 key 本不互擋，保險起見仍推進）
+for _, fn in ipairs(clientCommandHandlers) do
+    fn("MinidoracatCleaner", "touch", rival29, { ids = { probe29:getID() } })
+end
+local n29b = Stamp.readTouch(probe29)
+check(n29b == "rival", "rival 覆蓋成功（變異「readTouch 回 nil」或「改讀舊 key」時本條或下一條轉紅）")
+check(countOverwriteSince29(logBase29) == 1, "覆蓋他人章寫出一行 touch_overwrite（洗章偵測的第二份證據）")
+local sawOverwriteDetail29 = false
+for i = logBase29 + 1, #logLines do
+    if logLines[i]:find("overwritten=1", 1, true) and logLines[i]:find("batch=1", 1, true) then
+        sawOverwriteDetail29 = true
+    end
+end
+check(sawOverwriteDetail29, "touch_overwrite 的 detail 帶 overwritten=1 batch=1")
+local ack29 = 0
+local ackAtOk29 = true
+for i = sentBase29 + 1, #sentCommands do
+    local c = sentCommands[i]
+    if c.command == "touchAck" then
+        ack29 = ack29 + 1
+        if c.args.at ~= STAMP_HOUR then ackAtOk29 = false end
+    end
+end
+check(ack29 >= 2 and ackAtOk29, "兩次 touch 各推送 touchAck 且 at 是 server 的整點值（實際 "
+    .. ack29 .. " 則）")
+nowSec = savedSec29
+end
+
+print()
+do
+local Stamp = MinidoracatCleaner
+local savedSec30 = nowSec
+print("情境三十：章的 key 插入順序一致性（壓縮命中前提）")
+-- modData 序列化直接迭代 KahluaTableImpl 的 LinkedHashMap（KahluaTableImpl.java:205-231），
+-- 插入順序決定 byte 序列；CompressIdenticalItems 逐 byte 比對。rewriteStamps 的契約是
+-- 「先全刪、再按 drop→touch 固定順序重插」，於是**不論操作歷史**最終順序一致。
+-- harness 的 modData 是標準 Lua table、看不到順序，但 LinkedHashMap 的最終順序由
+-- rawset 呼叫序完全決定（rawset(k,nil)=remove、rawset(k,v)=put）——所以攔截全域 rawset
+-- 記錄呼叫序，斷言呼叫序即斷言 LinkedHashMap 的最終插入序。
+nowSec = STAMP_HOUR
+local itemA30 = makeItem("Base.OrderProbe")   -- 歷史 A：先被搬（touch）、後被丟（drop）
+local itemB30 = makeItem("Base.OrderProbe")   -- 歷史 B：先被丟（drop）、後被搬（touch）
+local logA30, logB30 = {}, {}
+local realRawset30 = rawset
+rawset = function(t, k, v)
+    local entry = (v == nil and "-" or "+") .. tostring(k)
+    if t == itemA30._modData then logA30[#logA30 + 1] = entry
+    elseif t == itemB30._modData then logB30[#logB30 + 1] = entry end
+    return realRawset30(t, k, v)
+end
+Stamp.stampMove(itemA30, "ryan")
+Stamp.stampDrop(itemA30, "ryan")
+Stamp.stampDrop(itemB30, "ryan")
+Stamp.stampMove(itemB30, "ryan")
+rawset = realRawset30
+local function finalRewrite30(log)
+    -- 每次 rewriteStamps 的完整操作序固定為 5 次 remove＋最多 2 次 put。只看 `+` 不夠：
+    -- LinkedHashMap 對既有 key 的 put **不改插入序**，所以「不先刪、只照 d→t put」時
+    -- +rawset 記錄照樣是 d,t，但物品 A 的真實順序仍是 t,d（R2 review 抓到的假綠）。
+    if #log < 7 then return table.concat(log, ",") end
+    local out = {}
+    for i = #log - 6, #log do out[#out + 1] = log[i] end
+    return table.concat(out, ",")
+end
+local expected30 = "-MIC42_d,-MIC42_t,-MIC42_lastDroppedBy,-MIC42_lastMovedBy,"
+    .. "-MIC42_lastMovedAt,+MIC42_d,+MIC42_t"
+check(#logA30 > 0 and #logB30 > 0, "活性：兩件物品的 rawset 都有被攔截記錄")
+check(finalRewrite30(logA30) == finalRewrite30(logB30),
+    "兩種操作歷史的最終 rewrite 序相同（實際 A=" .. finalRewrite30(logA30)
+    .. " B=" .. finalRewrite30(logB30) .. "）")
+check(finalRewrite30(logA30) == expected30,
+    "每次都先刪新舊五 key，再固定 drop→touch 重插（反序／不先刪任一變異皆轉紅）")
+check(rawget(itemA30._modData, "MIC42_t") == rawget(itemB30._modData, "MIC42_t")
+        and rawget(itemA30._modData, "MIC42_d") == rawget(itemB30._modData, "MIC42_d"),
+    "兩種歷史的最終 key 值也完全相同（同人同小時 → 可與彼此壓縮）")
+nowSec = savedSec30
+end
+
+print()
+print("情境三十一：AnimalGroupList 的 * / all 語意")
+do
+    -- 動物定義用檔頭的全域 mock（ANIMAL_GROUPS：rattus→rat、hen→chicken、doe→deer、sow→pig）。
+    -- 刻意不在這裡重設 AnimalDefinitions：那會蓋掉 AnimalScanner 也在用的同一份表，
+    -- 而情境三十二要靠它把 sow 認成 pig
+    local savedList = sandbox.AnimalGroupList
+
+    sandbox.AnimalGroupList = ""
+    local defSet = MinidoracatCleaner.getAnimalGroupSet()
+    check(defSet.rat == true and defSet.mouse == true and defSet.rabbit == true and defSet.chicken == true,
+        "留空 → 預設四害獸都在 set 裡")
+    check(defSet.deer == nil and defSet.pig == nil and defSet._allowAll == nil,
+        "留空 → 不是 all，也不含鹿／豬")
+
+    sandbox.AnimalGroupList = "all"
+    local allSet = MinidoracatCleaner.getAnimalGroupSet()
+    check(allSet._allowAll == true, "all → _allowAll sentinel")
+    check(allSet.rat == nil and allSet.deer == nil,
+        "all 模式不逐一列 group key（scanner 看 sentinel）")
+
+    sandbox.AnimalGroupList = "*"
+    check(MinidoracatCleaner.getAnimalGroupSet()._allowAll == true, "* 等同 all")
+
+    sandbox.AnimalGroupList = "ALL"
+    check(MinidoracatCleaner.getAnimalGroupSet()._allowAll == true, "ALL 不分大小寫")
+
+    sandbox.AnimalGroupList = "all,rat"
+    check(MinidoracatCleaner.getAnimalGroupSet()._allowAll == true,
+        "清單裡只要出現 all／* 就整份當全部（不必手列其餘）")
+
+    sandbox.AnimalGroupList = "deer,rat"
+    local mix = MinidoracatCleaner.getAnimalGroupSet()
+    check(mix.deer == true and mix.rat == true, "明示清單解析 deer+rat")
+    check(mix._allowAll == nil and mix.chicken == nil and mix.pig == nil,
+        "明示清單不是 all，也不帶預設雞／豬")
+
+    -- scanner 端的判定不在這裡驗——測試自己複製一份 `set._allowAll or set[group]` 是套套
+    -- 邏輯，把 AnimalScanner 那行變異回舊版也不會轉紅（review 實測）。真實消費端由
+    -- 情境三十二驅動 runAnimalScan 覆蓋。
+
+    sandbox.AnimalGroupList = savedList
+end
+print()
+print("情境三十二：AnimalScanner 的真實掃描（* 生效、remove 分幀、NaN 跳過）")
+do
+local C = MinidoracatCleaner.CONSTANTS
+-- 不宣告 savedXxx local（main chunk 的 200 locals 額度已滿）：檔頭的 SandboxVars 存根
+-- 本來就沒有任何動物選項（走 DEFAULTS），所以收尾直接設回 nil 就是還原
+
+-- seedPigs／countEvent／livePigs／resetWarned 已提升為共用全域（見 runTicks 之後那一段）：
+-- 情境三十四需要同一組工具，而 main chunk 的 local 額度已滿
+
+sandbox.AnimalCleanupEnabled = true
+sandbox.MaxAnimalsPerGroup = 10
+sandbox.MaxZoneAnimalsPerGroup = 0
+-- 掃描間隔 0：本情境的標的是「清除怎麼攤平」，不是「多久掃一次」
+sandbox.AnimalScanIntervalSeconds = 0
+
+-- ① 明示清單沒有 pig ⇒ 一隻都不該碰。這條同時是 ② 的對照組：證明 ② 的清理確實來自 `*`
+sandbox.AnimalGroupList = "rat"
+seedAnimals({ { atype = "sow", count = 30 } })
+runTicks(12)
+check(#ANIMAL_REMOVED == 0,
+    "明示清單未列 pig ⇒ 30 隻豬一隻都沒被清（實際 " .. #ANIMAL_REMOVED .. "）")
+
+-- ② `*` ⇒ pig 進入清理。**這條釘住 AnimalScanner 的 sentinel 消費點**：all 模式下
+--    allowedGroups 只有 _allowAll、不含 pig key，所以把判定變異回舊版 allowedGroups[group]
+--    會讓清理數變 0 而轉紅——正是情境三十一的複製品斷言擋不住的那個回歸
+sandbox.AnimalGroupList = "*"
+resetAnimalWarned()
+seedAnimals({ { atype = "sow", count = 30 } })
+local cleanBefore32 = countLogEvent("animal_clean")
+local perTick32 = {}
+for _ = 1, 14 do
+    local before = #ANIMAL_REMOVED
+    runTicks(1)
+    perTick32[#perTick32 + 1] = #ANIMAL_REMOVED - before
+end
+check(#ANIMAL_REMOVED == C.ANIMALS_PER_ROUND,
+    "* 讓 pig 進清理，總量等於每輪額度 " .. C.ANIMALS_PER_ROUND
+        .. "（實際 " .. #ANIMAL_REMOVED .. "）")
+check(liveAnimals() == 30 - C.ANIMALS_PER_ROUND,
+    "剩餘等於散養上限 10（實際 " .. liveAnimals() .. "）")
+local peak32 = 0
+for _, n in ipairs(perTick32) do
+    if n > peak32 then
+        peak32 = n
+    end
+end
+check(peak32 > 0, "活性：真的有刪（沒有這條，下面的上限斷言可能只是空轉）")
+check(peak32 <= C.ANIMALS_PER_TICK,
+    "單 tick remove 峰值 " .. peak32 .. " ≤ 上限 " .. C.ANIMALS_PER_TICK
+        .. "（舊版是單 tick 直接刪滿 " .. C.ANIMALS_PER_ROUND .. "）")
+check(countLogEvent("animal_clean") - cleanBefore32 == 1,
+    "跨多個 tick 仍只寫一行 animal_clean（分幀沒有破壞逐 bucket 聚合）")
+
+-- ③ 座標 NaN 的動物必須跳過並留診斷。掃描當時座標仍正常——NaN 會讓 chebyshevDistance
+--    回 NaN 而根本進不了 bucket，所以只有「計畫排入後才壞掉」這個形態測得到，而它正是
+--    實機的形態（動物狀態在幀之間變壞）。
+--    數量刻意用 20 而非 30：30 隻對上限 10 會觸發 ANIMAL_EMERGENCY_MULTIPLIER（>2 倍）
+--    的緊急加速而跳過警告確認，第一輪就排入，下面「第二輪才排入」的前提就不成立了
+sandbox.AnimalGroupList = "*"
+resetAnimalWarned()
+seedAnimals({ { atype = "sow", count = 20 } })
+local excess32 = 20 - 10
+local nanBefore32 = countLogEvent("animal_nan")
+runTicks(1)
+check(#ANIMAL_REMOVED == 0, "前提：第一輪只警告、不刪")
+runTicks(1)
+check(#ANIMAL_REMOVED == 0,
+    "前提：計畫已排入，但本 tick 還沒開始刪（onTick 先消化再掃描，排入落在尾端）")
+ANIMAL_ROSTER[1]._opts.x = 0 / 0
+-- 第二隻只讓 z 壞掉：這條釘住「三軸都要查」——只擋 x／y 的版本會照樣把它 remove
+ANIMAL_ROSTER[2]._opts.z = 0 / 0
+runTicks(14)
+check(ANIMAL_ROSTER[1].isGone() == false, "x 座標 NaN 的動物沒有被 remove")
+check(ANIMAL_ROSTER[2].isGone() == false, "只有 z 座標 NaN 的動物也沒有被 remove")
+check(countLogEvent("animal_nan") - nanBefore32 == 1,
+    "兩隻都記在同一行 animal_nan（聚合，不是逐隻寫）")
+ANIMAL_NAN_LINE = nil
+for i = #logLines, 1, -1 do
+    if logLines[i]:find("[animal_nan]", 1, true) then
+        ANIMAL_NAN_LINE = logLines[i]
+        break
+    end
+end
+check(ANIMAL_NAN_LINE ~= nil and ANIMAL_NAN_LINE:find("skipped=2", 1, true) ~= nil,
+    "同兩隻 NaN 跨多個 recount tick 仍各只計一次（nanSeen 去重，實際 skipped=2）")
+check(#ANIMAL_REMOVED == excess32,
+    "NaN 跳過不佔額度，照樣刪滿超額的 " .. excess32 .. " 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+check(liveAnimals() == 20 - excess32,
+    "正常座標的動物沒被誤殺、且剛好收在上限 10（x == x 恆真；剩餘 " .. liveAnimals() .. "）")
+
+-- ④ 清理進行中關掉總開關：立刻停手，且已刪除的部分仍要落盤（物品側 0.3.0 修過同型問題）
+sandbox.AnimalGroupList = "*"
+resetAnimalWarned()
+seedAnimals({ { atype = "sow", count = 30 } })
+local cleanBefore32d = countLogEvent("animal_clean")
+runTicks(3)
+local partial32 = #ANIMAL_REMOVED
+check(partial32 > 0 and partial32 < C.ANIMALS_PER_ROUND,
+    "前提：刪了一部分但還沒刪完（實際 " .. partial32 .. "）")
+check(countLogEvent("animal_clean") - cleanBefore32d == 0,
+    "前提：此刻還沒落盤（聚合要等計畫做完，所以下面那行只能來自停用轉場）")
+sandbox.AnimalCleanupEnabled = false
+runTicks(5)
+check(#ANIMAL_REMOVED == partial32,
+    "關掉開關後一隻都沒再刪（實際 " .. #ANIMAL_REMOVED .. "）")
+check(countLogEvent("animal_clean") - cleanBefore32d == 1,
+    "已刪除的部分仍落盤，且沒有重複寫出")
+
+-- ⑤ 散養與圈養同時超標：兩個計畫都要被處理完。消化端是「做完第一個 plan 才換第二個」，
+--    planIndex 的遞增若壞掉，圈養那半會被整批跳過而完全不清——而總量斷言抓不到它
+--    （散養那半照樣刪滿），只有 zoned=／scope= 抓得到
+-- ④ 刻意把總開關關掉了，這裡要先開回來——否則 onTick 直接 return，連 resetWarned 都不會
+-- 清到任何東西，下面三條會全部因為「一隻都沒清」而紅，看起來像 plan 切換壞了
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.MaxZoneAnimalsPerGroup = 10
+resetAnimalWarned()
+ANIMAL_ROSTER = {}
+for i = 1, 15 do
+    ANIMAL_ROSTER[i] = makeTestAnimal({ id = 6000 + i, atype = "sow", x = 100, y = 100 })
+end
+for i = 16, 30 do
+    -- getHutch 非 nil ⇒ classifyAnimal 回 "zone"（雞舍路徑，不必建圈地）
+    ANIMAL_ROSTER[i] = makeTestAnimal({ id = 6000 + i, atype = "sow", x = 100, y = 100, hutch = {} })
+end
+ANIMAL_REMOVED = {}
+runTicks(14)
+-- 全域而非 local：main chunk 已達 Lua 的 200 locals 硬上限（檔頭 STAMP_HOUR 同註，
+-- 這裡再加一個 local 會直接編譯失敗）
+ANIMAL_CLEAN_LINE = nil
+for i = #logLines, 1, -1 do
+    if logLines[i]:find("[animal_clean]", 1, true) then
+        ANIMAL_CLEAN_LINE = logLines[i]
+        break
+    end
+end
+check(#ANIMAL_REMOVED == 10,
+    "散養超 5 ＋ 圈養超 5 ⇒ 共刪 10 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+check(ANIMAL_CLEAN_LINE ~= nil and ANIMAL_CLEAN_LINE:find("zoned=5", 1, true) ~= nil,
+    "圈養那個計畫也被處理（zoned=5；plan 切換漏掉第二個計畫時轉紅）")
+check(ANIMAL_CLEAN_LINE ~= nil and ANIMAL_CLEAN_LINE:find("scope=both", 1, true) ~= nil,
+    "log 的 scope 反映兩側都清了")
+
+ANIMAL_ROSTER = nil
+sandbox.AnimalGroupList = nil
+sandbox.MaxAnimalsPerGroup = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.AnimalCleanupEnabled = nil
+end
+
+print()
+print("情境三十三：server 端 drop 路徑真的寫新章格式")
+do
+-- installDropHooks 掛在 OnGameStart，而它才註冊 OnProcessTransaction——兩段都要驅動
+for _, fn in ipairs(GAME_START_HANDLERS) do
+    fn()
+end
+check(#TRANSACTION_HANDLERS > 0,
+    "前提：drop hook 已安裝並註冊 OnProcessTransaction（安裝階段 nil-deref 會讓這條轉紅）")
+local savedSec33 = nowSec
+-- 刻意用非整點：驗證寫入端有取整，而不是原樣落地
+nowSec = STAMP_HOUR + 1234
+local item33 = makeItem("Base.StampProbe")
+for _, fn in ipairs(TRANSACTION_HANDLERS) do
+    fn("dropOnFloor", player, item33, nil, nil, { square = getOrMakeSquare(100, 100, 0) })
+end
+check(MinidoracatCleaner.readDrop(item33) == "tester",
+    "drop 路徑蓋上丟棄者章（釘住 DropStamp 的 stampDrop 呼叫點）")
+local mover33, at33 = MinidoracatCleaner.readTouch(item33)
+check(mover33 == "tester" and at33 == STAMP_HOUR,
+    "同一次 drop 也蓋操作者章、且取整到小時（實際 " .. tostring(mover33)
+        .. " / " .. tostring(at33) .. "）")
+check(rawget(item33._modData, MinidoracatCleaner.LEGACY_DROPPED) == nil
+        and rawget(item33._modData, MinidoracatCleaner.LEGACY_MOVED) == nil
+        and rawget(item33._modData, MinidoracatCleaner.LEGACY_MOVED_AT) == nil,
+    "drop 路徑寫的是新 key，沒留任何 0.3.0 舊 key")
+nowSec = savedSec33
+end
+
+print()
+print("情境三十四：多個 bucket ＝ 多個 job")
+do
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.MaxAnimalsPerGroup = 10
+sandbox.MaxZoneAnimalsPerGroup = 0
+sandbox.AnimalScanIntervalSeconds = 0
+
+-- ① 兩個群組各超標 ⇒ 兩個 bucket ⇒ 兩個 job。
+--    這是 Kahlua 上「就地把消化完的槽設 nil ⇒ #removalQueue 回 0 ⇒ 第二個以後的 job
+--    整表被丟棄」的最小反例形態，也是「額度跨 job 分配」與「每個 job 各一行 log」的
+--    唯一可執行覆蓋——情境三十二全部只有一個 job（單玩家＋單群組），碰不到這條路徑。
+seedAnimals({ { atype = "sow", count = 15 }, { atype = "hen", count = 15 } })
+resetAnimalWarned()
+ANIMAL_REMOVED = {}
+CLEAN_BEFORE = countLogEvent("animal_clean")
+runTicks(24)
+check(#ANIMAL_REMOVED == 10,
+    "兩群各超 5 ⇒ 共刪 10 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+check(liveAnimals("sow") == 10 and liveAnimals("hen") == 10,
+    "兩群都收在上限 10（實際 sow=" .. liveAnimals("sow") .. " hen=" .. liveAnimals("hen") .. "）")
+check(countLogEvent("animal_clean") - CLEAN_BEFORE == 2,
+    "兩個 job 各寫一行 animal_clean（只寫一行＝第二個 job 被丟掉了）")
+
+-- ② 總超額大於每輪額度：先排序的 job 吃光額度，後面的 job 根本沒被嘗試。
+--    那些 job 不得寫 animal_protected_over——該事件的語意是「候選重驗全數失效」，
+--    把「額度用完」記成那樣會讓正式服排障往保護判定的方向找。
+--    **必須鎖成單輪掃描**：掃描間隔 0 的話佇列一排空就會立刻重掃、重設額度再刪一輪，
+--    「每輪 20」的斷言會變成「20 × 輪數」。這裡把間隔拉長，並靠 30 隻對上限 10
+--    （> ANIMAL_EMERGENCY_MULTIPLIER × 10）的緊急加速在第一次掃描就直接確認。
+sandbox.AnimalScanIntervalSeconds = 3600
+seedAnimals({ { atype = "sow", count = 30 }, { atype = "hen", count = 30 } })
+resetAnimalWarned()
+-- resetAnimalWarned 那一 tick 也會掃描並更新 lastScanAt，所以要把時鐘推過間隔
+nowMs = nowMs + 3600 * 1000 + 1
+ANIMAL_REMOVED = {}
+CLEAN_BEFORE = countLogEvent("animal_clean")
+PROT_BEFORE = countLogEvent("animal_protected_over")
+runTicks(30)
+check(#ANIMAL_REMOVED == MinidoracatCleaner.CONSTANTS.ANIMALS_PER_ROUND,
+    "總量收在每輪額度 " .. MinidoracatCleaner.CONSTANTS.ANIMALS_PER_ROUND
+        .. "（實際 " .. #ANIMAL_REMOVED .. "）")
+-- 失敗時把整段動物 log 印出來：這條斷言的價值在於「哪個 job、什麼順序」，光看數字查不出
+if countLogEvent("animal_protected_over") - PROT_BEFORE ~= 0 then
+    for i = 1, #logLines do
+        if logLines[i]:find("[animal_", 1, true) then
+            print("        LOG " .. i .. ": " .. logLines[i])
+        end
+    end
+end
+check(countLogEvent("animal_protected_over") - PROT_BEFORE == 0,
+    "額度用盡而未被嘗試的 job 不寫 animal_protected_over（實際多了 "
+        .. (countLogEvent("animal_protected_over") - PROT_BEFORE) .. " 行）")
+check(countLogEvent("animal_clean") - CLEAN_BEFORE == 1,
+    "只有真的刪了東西的那個 job 寫 animal_clean")
+
+ANIMAL_ROSTER = nil
+sandbox.AnimalGroupList = nil
+sandbox.MaxAnimalsPerGroup = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.AnimalCleanupEnabled = nil
+end
+
+print()
+print("情境三十五：client 端 touchAck 走同一套章格式")
+do
+-- 延後 require：Client.lua 也註冊 OnGameStart（installTouchReporters），而情境三十三
+-- 已經把 GAME_START_HANDLERS 跑完了，所以它不會被觸發——那條路徑要 client-only 的
+-- vanilla class（ISInventoryTransferAction／ISGrabItemAction），不是本情境的標的。
+-- 本情境釘的是持久化契約的 client 半邊：ack 進來時寫的是不是新章格式。
+require "MinidoracatCleaner_Client"
+check(#SERVER_COMMAND_HANDLERS > 0,
+    "前提：client 的 OnServerCommand handler 已註冊（載入失敗會讓這條轉紅）")
+-- 全域而非 local：main chunk 已達 Lua 的 200 locals 硬上限（檔頭 STAMP_HOUR 同註）
+ACK_SAVED_SEC = nowSec
+nowSec = STAMP_HOUR + 777
+ACK_SHELF = makeContainer("furniture")
+
+putFurniture(100, 100, 0, ACK_SHELF)
+ACK_ITEM = ACK_SHELF:add(makeItem("Base.AckProbe"))
+for _, fn in ipairs(SERVER_COMMAND_HANDLERS) do
+    fn("MinidoracatCleaner", "touchAck", { ids = { ACK_ITEM:getID() }, name = "tester", at = STAMP_HOUR })
+end
+ACK_MOVER, ACK_AT = MinidoracatCleaner.readTouch(ACK_ITEM)
+check(ACK_MOVER == "tester" and ACK_AT == STAMP_HOUR,
+    "client 收到 ack 後寫入新章格式（實際 " .. tostring(ACK_MOVER) .. " / " .. tostring(ACK_AT) .. "）")
+check(rawget(ACK_ITEM._modData, MinidoracatCleaner.LEGACY_MOVED) == nil
+        and rawget(ACK_ITEM._modData, MinidoracatCleaner.LEGACY_MOVED_AT) == nil,
+    "client 端沒留任何 0.3.0 舊 key（釘住 applyTouchAck 走 Core.writeTouch）")
+-- ack 缺 at 時不得用 client 本端時鐘鑄造（server 權威）
+for _, fn in ipairs(SERVER_COMMAND_HANDLERS) do
+    fn("MinidoracatCleaner", "touchAck", { ids = { ACK_ITEM:getID() }, name = "other", at = nil })
+end
+check(MinidoracatCleaner.readTouch(ACK_ITEM) == "tester",
+    "缺 at 的畸形 ack 不覆蓋既有章（不從 client 時鐘補值）")
+nowSec = ACK_SAVED_SEC
+end
+print()
+print("情境三十六：recount 的 scope／budget／跨 plan NaN 邊界")
+do
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.MaxAnimalsPerGroup = 10
+sandbox.MaxZoneAnimalsPerGroup = 0
+sandbox.AnimalScanIntervalSeconds = 0
+
+-- ① 原候選走出原玩家半徑後，不得繼續算在舊 bucket。11 隻對上限 10：第一輪警告，
+--    第二輪排入；刪除前把 1 隻移到 1000,1000，原 bucket 當下只剩 10 → 不該再刪。
+--    少了 nearestPlayer/radius 重驗時會 walkAlive=11、再刪 1 隻而轉紅。
+seedAnimals({ { atype = "sow", count = 11 } })
+resetAnimalWarned()
+ANIMAL_REMOVED = {}
+runTicks(1)
+runTicks(1)
+ANIMAL_ROSTER[1]._opts.x = 1000
+ANIMAL_ROSTER[1]._opts.y = 1000
+runTicks(8)
+check(#ANIMAL_REMOVED == 0,
+    "原候選移出玩家半徑後，舊 bucket 已回上限 10，不再補刪（實際 " .. #ANIMAL_REMOVED .. "）")
+
+-- ①b 不能只驗「nearest 不存在」；還要驗「仍有 nearest、但已改歸另一位玩家」。
+-- 初始：舊玩家在 100、新玩家在 160，動物在 100 ⇒ 舊玩家最近。排入後把第一隻移到 160，
+-- 它仍在舊玩家 64 格半徑內（距離 60），但 nearest 已是新玩家。若 production 只檢查
+-- nearest ~= nil、不比對 job.playerObj，仍會把它算進舊 bucket 而補刪 1 隻。
+REASSIGN_PLAYER = {
+    getX = function() return 160 end,
+    getY = function() return 100 end,
+    getZ = function() return 0 end,
+    getUsername = function() return "reassigned" end,
+    getOnlineID = function() return 77 end,
+    getCurrentSquare = function() return getOrMakeSquare(160, 100, 0) end,
+    getInventory = function() return makeContainer("player") end,
+    isEquipped = function() return false end,
+    isAttachedItem = function() return false end,
+}
+onlineRoster = { player, REASSIGN_PLAYER }
+seedAnimals({ { atype = "sow", count = 11 } })
+resetAnimalWarned()
+ANIMAL_REMOVED = {}
+runTicks(1)
+runTicks(1)
+ANIMAL_ROSTER[1]._opts.x = 160
+runTicks(8)
+check(#ANIMAL_REMOVED == 0,
+    "候選仍在舊半徑內但改歸另一 nearest player，也不再算進舊 bucket")
+onlineRoster = nil
+
+-- ② 單一 plan 超過 visit budget：無法在同一 tick 完整 recount，跨 tick 攢 walkValid 又會
+--    讓前半段驗證過期。正確是本輪 fail-closed 不刪＋專用診斷，不是硬走 513 筆也不是
+--    animal_protected_over。間隔拉長避免佇列排空後第二輪又重掃。
+sandbox.AnimalScanIntervalSeconds = 3600
+seedAnimals({ { atype = "sow", count = MinidoracatCleaner.CONSTANTS.ANIMAL_VISITS_PER_TICK + 1 } })
+nowMs = nowMs + 3600 * 1000 + 1
+UNPROV_BEFORE = countLogEvent("animal_recount_unprovable")
+PROT_BEFORE = countLogEvent("animal_protected_over")
+ANIMAL_REMOVED = {}
+runTicks(6)
+check(#ANIMAL_REMOVED == 0,
+    "plan 候選數超過 visit budget 時 fail-closed，一隻不刪")
+check(countLogEvent("animal_recount_unprovable") - UNPROV_BEFORE == 1,
+    "留一行 animal_recount_unprovable（不是靜默跳過）")
+check(countLogEvent("animal_protected_over") - PROT_BEFORE == 0,
+    "無法同 tick 重數不冒充『候選重驗全數失效』")
+
+-- 持續同一個 unprovable 狀態不應每輪重寫：共用 ZLogger >10MB 會截斷原檔。
+UNPROV_REPEAT = countLogEvent("animal_recount_unprovable")
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(6)
+check(countLogEvent("animal_recount_unprovable") - UNPROV_REPEAT == 0,
+    "持續 > visit budget 的同一 bucket 不重複寫 unprovable（首次診斷已足夠）")
+
+-- partial multi-plan：marker 已存在；下一輪同一 pig bucket 的 stray plan 先刪滿 round budget，
+-- 後置 zone plan（513）完全未嘗試。只有**所有 plans 完成**才能解除 marker；job-wide
+-- attempted 會因前 plan 成功就誤解除，下一輪 zone 仍 513 時又重寫「首次」診斷。
+sandbox.MaxZoneAnimalsPerGroup = 10
+seedAnimals({
+    { atype = "sow", count = 30 },
+    { atype = "sow", count = MinidoracatCleaner.CONSTANTS.ANIMAL_VISITS_PER_TICK + 1, hutch = true },
+})
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(16)
+seedAnimals({
+    { atype = "sow", count = MinidoracatCleaner.CONSTANTS.ANIMAL_VISITS_PER_TICK + 1, hutch = true },
+})
+nowMs = nowMs + 3600 * 1000 + 1
+UNPROV_PARTIAL = countLogEvent("animal_recount_unprovable")
+runTicks(6)
+check(countLogEvent("animal_recount_unprovable") - UNPROV_PARTIAL == 0,
+    "前 plan 吃光額度、後置 unprovable plan 未嘗試，不會誤解除 marker")
+sandbox.MaxZoneAnimalsPerGroup = 0
+
+-- 恢復可證明且**所有 plans 完成**後才解除狀態；下次再超過應重新記一行。
+-- 不能用 512 隻當「恢復」：它雖可同 tick recount，但每輪只刪 20、plan 未完成，marker
+-- 正確不該解除。11 隻對上限10只刪1並完成整個 job，才是真正的恢復。
+seedAnimals({ { atype = "sow", count = 11 } })
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)  -- 首輪警告
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(8)  -- 次輪確認、刪1、plan完成
+seedAnimals({ { atype = "sow", count = MinidoracatCleaner.CONSTANTS.ANIMAL_VISITS_PER_TICK + 1 } })
+nowMs = nowMs + 3600 * 1000 + 1
+UNPROV_REARM = countLogEvent("animal_recount_unprovable")
+runTicks(6)
+check(countLogEvent("animal_recount_unprovable") - UNPROV_REARM == 1,
+    "恢復可證明後再超過，unprovable 首次診斷會重新啟用")
+
+-- 所有上限設 0 代表 bucket 生命週期中斷：兩張狀態表都要清。恢復同 key、仍 513 時，
+-- 應重新留一行首次診斷；若 early return 只清 warned，舊 marker 會永久壓掉這行。
+sandbox.MaxAnimalsPerGroup = 0
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+sandbox.MaxAnimalsPerGroup = 10
+seedAnimals({ { atype = "sow", count = MinidoracatCleaner.CONSTANTS.ANIMAL_VISITS_PER_TICK + 1 } })
+nowMs = nowMs + 3600 * 1000 + 1
+UNPROV_LIMITS = countLogEvent("animal_recount_unprovable")
+runTicks(6)
+check(countLogEvent("animal_recount_unprovable") - UNPROV_LIMITS == 1,
+    "所有上限 0 → 恢復後，unprovable 首次診斷重新啟用")
+
+-- 無玩家同樣等同所有 bucket 消失；warned 也要清，避免同 key 玩家重連後沿用舊確認直接清。
+onlineRoster = {}
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+onlineRoster = nil
+nowMs = nowMs + 3600 * 1000 + 1
+UNPROV_NOPLAYER = countLogEvent("animal_recount_unprovable")
+runTicks(6)
+check(countLogEvent("animal_recount_unprovable") - UNPROV_NOPLAYER == 1,
+    "無玩家 → 同 key 恢復後，unprovable 首次診斷重新啟用")
+
+-- warned 的 no-player 生命週期要用**非 emergency**數量獨立釘住。513 會被 emergency 短路，
+-- 完全不讀 warned，無法證明重連後「重新警告、不得沿用舊確認直接清」。
+-- 先以 limits=0 清乾淨，再用 11 隻建立一筆首次警告；玩家全離線後同 key 重連，
+-- 第一輪必須再寫一筆 warn 且零 remove。少掉 no-player 分支的 warned={} 時，會沿用舊時間戳
+-- 直接確認：warn 不新增（這條轉紅），下一 tick 開始清。
+sandbox.MaxAnimalsPerGroup = 0
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+sandbox.MaxAnimalsPerGroup = 10
+seedAnimals({ { atype = "sow", count = 11 } })
+WARN_SETUP = countAnimalWarn()
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)  -- 建立首次警告
+check(countAnimalWarn() - WARN_SETUP == 1,
+    "活性：離線前確實已建立一筆動物警告（不是空白 warned 的假通過）")
+onlineRoster = {}
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)  -- no-player early return：清兩表
+onlineRoster = nil
+WARN_REJOIN = countAnimalWarn()
+ANIMAL_REMOVED = {}
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+check(countAnimalWarn() - WARN_REJOIN == 1 and #ANIMAL_REMOVED == 0,
+    "玩家全離線後同 key 重連：重新警告且第一輪不清（animal warn +"
+        .. (countAnimalWarn() - WARN_REJOIN) .. " removed=" .. #ANIMAL_REMOVED .. "）")
+
+-- limits=0 同型：暫停所有上限後恢復，不能沿用暫停前的確認鏈。
+sandbox.MaxAnimalsPerGroup = 0
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+sandbox.MaxAnimalsPerGroup = 10
+WARN_LIMITS = countAnimalWarn()
+ANIMAL_REMOVED = {}
+nowMs = nowMs + 3600 * 1000 + 1
+runTicks(1)
+check(countAnimalWarn() - WARN_LIMITS == 1 and #ANIMAL_REMOVED == 0,
+    "所有上限 0 後恢復：重新寫動物警告且第一輪不清")
+
+-- ②b 兩個 plan 合計超過 visit budget，但各自都 ≤512：第一個 chicken plan 用掉 200 visits，
+-- 剩 312 不夠走 pig 的 400 → 原封不動留到下一 tick；不是誤判成 >512、也不會永久餓死。
+sandbox.AnimalScanIntervalSeconds = 0
+sandbox.AnimalLimitOverrides = "pig=399,chicken=199"
+seedAnimals({ { atype = "sow", count = 400 }, { atype = "hen", count = 200 } })
+resetAnimalWarned()
+ANIMAL_REMOVED = {}
+runTicks(1)
+runTicks(1)
+runTicks(1)
+check(#ANIMAL_REMOVED == 1,
+    "第一個 200-candidate job 用掉部分 visit budget；第二個 400-candidate job 延到下 tick")
+runTicks(1)
+check(#ANIMAL_REMOVED == 2,
+    "延後的 400-candidate job 下 tick 取得完整 budget 並前進（沒有餓死）")
+sandbox.AnimalLimitOverrides = nil
+
+-- ③ 同一 job 的 stray／zone 兩份 plan 各一隻 NaN：skipped 要加總成 2，而不是取 max=1。
+sandbox.AnimalScanIntervalSeconds = 0
+sandbox.MaxZoneAnimalsPerGroup = 10
+seedAnimals({ { atype = "sow", count = 11 }, { atype = "sow", count = 11, hutch = true } })
+resetAnimalWarned()
+ANIMAL_REMOVED = {}
+NAN_BEFORE = countLogEvent("animal_nan")
+runTicks(1)
+runTicks(1)
+ANIMAL_ROSTER[1]._opts.x = 0 / 0
+ANIMAL_ROSTER[12]._opts.z = 0 / 0
+runTicks(10)
+ANIMAL_NAN_LINE = nil
+for i = #logLines, 1, -1 do
+    if logLines[i]:find("[animal_nan]", 1, true) then
+        ANIMAL_NAN_LINE = logLines[i]
+        break
+    end
+end
+check(#ANIMAL_REMOVED == 2,
+    "散養超 1 ＋ 圈養超 1 ⇒ 正常候選共刪 2 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+check(countLogEvent("animal_nan") - NAN_BEFORE == 1,
+    "兩個 plan 的 NaN 仍聚合成一行")
+check(ANIMAL_NAN_LINE ~= nil and ANIMAL_NAN_LINE:find("skipped=2", 1, true) ~= nil,
+    "跨 plan 的 NaN 跳過數加總為 2（取 max 時會只有 1）")
+
+ANIMAL_ROSTER = nil
+sandbox.AnimalGroupList = nil
+sandbox.MaxAnimalsPerGroup = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.AnimalCleanupEnabled = nil
+end
+
+print()
+print("情境三十七：Tooltip client 消費端讀新章")
+do
+-- 延後 require 並補最小 vanilla stub。OnCreatePlayer 會同時執行 Client 的
+-- installTouchReporters，因此它需要兩個 client-only action class；Tooltip 本身只要
+-- ISToolTipInv.render 與 ISContextMenu.visibleCheck。visibleCheck=true 讓 render 在
+-- getTraceLines 之後直接收工，不必 mock 整套 UI layout，但仍真的跑了 readTouch＋時間格式化。
+ISInventoryTransferAction = { perform = function() end }
+ISGrabItemAction = { perform = function() end }
+TOOLTIP_ORIGINAL_CALLS = 0
+FORMAT_CALLS = 0
+CALENDAR_MS = nil
+ISToolTipInv = {
+    render = function(self)
+        TOOLTIP_ORIGINAL_CALLS = TOOLTIP_ORIGINAL_CALLS + 1
+        return "original"
+    end,
+}
+ISContextMenu = { instance = { visibleCheck = true } }
+Locale = { ENGLISH = {} }
+SimpleDateFormat = {
+    new = function()
+        return {
+            format = function()
+                FORMAT_CALLS = FORMAT_CALLS + 1
+                return "2026-08-23 12:00"
+            end,
+        }
+    end,
+}
+Calendar = {
+    getInstance = function()
+        return {
+            setTimeInMillis = function(_, value) CALENDAR_MS = value end,
+            getTime = function() return {} end,
+        }
+    end,
+}
+require "MinidoracatCleaner_Tooltip"
+for _, fn in ipairs(CREATE_PLAYER_HANDLERS) do
+    fn()
+end
+check(MinidoracatCleaner._tooltipHookInstalled == true,
+    "前提：Tooltip hook 已安裝（require／vanilla stub 形狀錯時轉紅）")
+
+-- 無章物品：getTraceLines 回 nil，必須退回原 render
+TOOLTIP_ORIGINAL_CALLS = 0
+ISToolTipInv.render({ item = makeItem("Base.NoTrace") })
+check(TOOLTIP_ORIGINAL_CALLS == 1,
+    "無章物品退回 vanilla render")
+
+-- ACK_ITEM 來自情境三十五，已由 client touchAck 寫入新格式小時章。
+-- 有章時 getTraceLines 非 nil，且 visibleCheck=true 讓 hook 不進完整 UI layout；
+-- 若 Tooltip 還在讀舊 key，會誤判無章而呼叫 original。
+TOOLTIP_ORIGINAL_CALLS = 0
+FORMAT_CALLS = 0
+CALENDAR_MS = nil
+ISToolTipInv.render({ item = ACK_ITEM })
+check(TOOLTIP_ORIGINAL_CALLS == 0,
+    "有新章的物品走自訂 Tooltip 路徑（不是退回 vanilla）")
+check(FORMAT_CALLS == 1 and CALENDAR_MS == STAMP_HOUR * 1000,
+    "小時章進 Calendar/SimpleDateFormat 格式化（實際 calls=" .. FORMAT_CALLS
+        .. " ms=" .. tostring(CALENDAR_MS) .. "）")
+end
 print()
 if failures > 0 then
     print(failures .. " 項失敗")

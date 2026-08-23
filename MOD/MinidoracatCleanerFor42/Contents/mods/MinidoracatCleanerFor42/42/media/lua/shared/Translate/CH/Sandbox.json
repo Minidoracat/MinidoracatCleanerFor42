@@ -22,7 +22,7 @@
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup": "散養動物上限（每群組）",
   "Sandbox_MinidoracatCleanerFor42_MaxAnimalsPerGroup_tooltip": "所有清理群組共用的預設散養上限（每群組、每位玩家附近各自計算）。圈養（圈地／雞舍）、已命名、正被牽著或抱著的都不計入。想給特定群組不同數值請用「散養上限覆寫」。\n關於設為 0：它只停用「共用預設值」這一項，實際效果取決於其他三個設定。若「圈養動物上限」與兩個覆寫欄位也都是 0 或留空（出廠預設正是如此），動物清理會整套停止；但只要其中任一項填了正數，掃描就會繼續，那些項目照樣生效。要明確關閉整套，請用上方的「啟用動物清理」。",
   "Sandbox_MinidoracatCleanerFor42_AnimalGroupList": "動物清理群組（白名單）",
-  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "允許清理的動物群組。支援關鍵字：群組 key（rat）、種類 key 或翻譯名稱（依伺服器語言，例如輸入「老鼠」）。留空＝預設 rat,mouse,rabbit,chicken。",
+  "Sandbox_MinidoracatCleanerFor42_AnimalGroupList_tooltip": "允許清理的動物群組。\n填法：群組 key（rat）、種類 key，或翻譯名稱（依伺服器語言，例如「老鼠」）。多個用逗號分隔。\n留空：預設 rat,mouse,rabbit,chicken。\n特殊值 * 或 all（不分大小寫）：遊戲已知的全部動物群組（含其他 MOD 新增的）。只有本欄吃這兩個值，下面兩個覆寫欄位仍只認具體群組名。\n保護仍生效：圈養上限、已命名／牽抱不會被繞過——all 只擴大「哪些物種可清」。",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides": "散養上限覆寫（逐群組）",
   "Sandbox_MinidoracatCleanerFor42_AnimalLimitOverrides_tooltip": "針對上面「散養動物上限」的分組例外。例如填 rat=20,rabbit=40，表示老鼠用 20、兔子用 40，沒列出的群組仍然用預設值。填 0 不是「零容許量」而是「該群組的散養完全不清理」。不影響「圈養動物上限」。群組名可以用關鍵字（例如「老鼠=20」）。",
   "Sandbox_MinidoracatCleanerFor42_AnimalScanRadius": "動物掃描半徑",
