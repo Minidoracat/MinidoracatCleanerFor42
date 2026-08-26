@@ -10,18 +10,14 @@ local warned = {}
 -- 下次再超過才重新記
 local unprovableWarned = {}
 local lastScanAt = 0
--- 待移除佇列。runAnimalScan 只產生「每個 bucket 的完整移除計畫」，實際 remove 由
--- processRemovals 跨 tick 消化，每 tick 最多 C.ANIMALS_PER_TICK 隻（降壓的理由見 Core 的
--- ANIMALS_PER_TICK 說明）。佇列未排空前不開新一輪掃描，所以每輪總額度仍是
--- ANIMALS_PER_ROUND——只有「什麼時候刪」變了，「刪多少」沒變。
+-- 待移除佇列（**只涵蓋散養**：per-player 熱點與全服兜底。圈養的清除與繁殖由
+-- AnimalBreeding 以每座農場為單位治理）。runAnimalScan 只產生「每個 bucket 的完整
+-- 移除計畫」，實際 remove 由 processRemovals 跨 tick 消化，每 tick 的 remove 上限是
+-- **與農場治理共用**的 budget.removals（C.ANIMALS_PER_TICK；見 onTick）。佇列未排空前
+-- 不開新一輪掃描，所以每輪總額度仍是 ANIMALS_PER_ROUND。
 local removalQueue = {}
 local removalHead = 1
 local removalBudget = 0
-
-local function hasCustomName(animal)
-    local name = animal:getCustomName()
-    return name ~= nil and tostring(name):match("^%s*(.-)%s*$") ~= ""
-end
 
 local function snapshotAnimals(list)
     local result = {}
@@ -83,20 +79,15 @@ local function isNearAnimalZone(animal, zoneCache)
     return false
 end
 
--- 三態分類：protected＝絕對保護（命名/掛鉤/牽抱/持有/載具/死亡）；zone＝圈養（圈地±2格或屬雞舍）；stray＝散養
+-- 三態分類：protected＝絕對保護（Cleaner.isProtectedAnimal，與農場治理共用同一份判定）；
+-- zone＝圈養（圈地±2格或屬雞舍）；stray＝散養。
+-- **本模組只治理 stray**：zone 動物的清除與繁殖上限由 AnimalBreeding 以「每座農場」
+-- 為單位治理（設計評審 A2 裁決），這裡看到 zone 一律跳過、只留診斷計數。
+-- 分類仍保留 ±2 buffer 與雞舍判定：站在農場圍欄邊緣（buffer 內）或屬於圈地外雞舍的
+-- 動物，農場治理算不到牠們（不在 getAnimalsConnected 裡），但也**不可**因此掉進散養桶
+-- 被 MaxAnimalsPerGroup 清掉——寬鬆的 zone 判定就是牠們的保護
 local function classifyAnimal(animal, zoneCache)
-    if not animal or animal:isDead() or animal:getSquare() == nil then
-        return "protected"
-    end
-    if hasCustomName(animal) or animal:isOnHook() then
-        return "protected"
-    end
-    local data = animal:getData()
-    if data and data:getAttachedPlayer() ~= nil then
-        return "protected"
-    end
-    -- IsoAnimal.java:2884-2886; IsoGameCharacter.java:11139-11141
-    if animal:isHeld() or animal:getVehicle() ~= nil then
+    if Cleaner.isProtectedAnimal(animal) then
         return "protected"
     end
     if isNearAnimalZone(animal, zoneCache) or animal:getHutch() ~= nil then
@@ -164,14 +155,16 @@ local function candidateSort(a, b)
     return a.order < b.order
 end
 
-local function hasAnyAnimalLimit(defaultLimit, zoneLimit, overrides, zoneOverrides)
-    if defaultLimit > 0 or zoneLimit > 0 then
+-- 兩個維度各自獨立：per-player 散養、全服散養。任一為正就仍需掃描。
+-- （圈養門檻屬於 AnimalBreeding 的農場治理，不在本模組的停擺判定裡）
+local function hasAnyAnimalLimit(defaultLimit, globalLimit, overrides, globalOverrides)
+    if defaultLimit > 0 or globalLimit > 0 then
         return true
     end
     for _, value in pairs(overrides) do
         if value > 0 then return true end
     end
-    for _, value in pairs(zoneOverrides) do
+    for _, value in pairs(globalOverrides) do
         if value > 0 then return true end
     end
     return false
@@ -235,8 +228,9 @@ local function flushRemoval(job, untried)
         unprovableWarned[job.key] = nil
     end
     if job.removed > 0 then
-        local cleanedScope = (job.zonedRemoved == job.removed) and "zone"
-            or (job.zonedRemoved == 0 and "stray" or "both")
+        -- scanner 只治理散養：scope 只剩 global（全服兜底）與 stray（per-player 熱點）。
+        -- 圈養的 animal_clean（scope=zone）由 AnimalBreeding 的農場治理寫
+        local cleanedScope = job.isGlobal and "global" or "stray"
         Cleaner.log(
             "animal_clean",
             "system",
@@ -249,7 +243,7 @@ local function flushRemoval(job, untried)
                 .. " zoned=" .. job.zonedRemoved
                 .. " scope=" .. cleanedScope
         )
-        local remaining = (job.count - (job.removed - job.zonedRemoved)) + (job.zoneCount - job.zonedRemoved)
+        local remaining = job.count - job.removed
         -- 與警告同理：定向送給 bucket 所屬玩家，而不是以動物群位置為圓心廣播
         if isStillOnline(job.playerObj) then
             Cleaner.notifyCleanedPlayerOnly(job.playerObj, "animals", job.group, job.removed, cleanedScope, remaining)
@@ -284,6 +278,16 @@ local function inspectCandidate(job, plan, candidate, zoneCache, players, radius
     if not animal then
         return "gone"
     end
+    -- 已經被別的 job 刪掉了。**不能靠引擎狀態判斷**：`animal:remove()` 走
+    -- delete() → removeFromSquare()，而 IsoMovingObject 只清 current/last
+    -- （IsoMovingObject.java:705）、IsoObject 只把自己從 square 的清單移除
+    -- （IsoObject.java:4539-4544）——**兩者都不清 this.square 欄位**，所以
+    -- getSquare() 在移除後仍回原 square，isDead() 也不會變 true。
+    -- 判準只能是我們自己蓋的旗標。它天然共享：全域桶與 per-player 桶刻意持有
+    -- 同一張 candidate table，第一個 job 標記完第二個就立刻看得到
+    if candidate.removed then
+        return "gone"
+    end
     -- 群組先查：不依賴座標，壞座標的動物也要能判斷「還算不算這一群」
     if getAnimalGroup(animal) ~= job.group then
         return "gone"
@@ -294,30 +298,38 @@ local function inspectCandidate(job, plan, candidate, zoneCache, players, radius
     if ax ~= ax or ay ~= ay or az ~= az then
         return "blocked"
     end
-    -- 重新套用**目前**在線玩家與**目前**掃描半徑。nearest 改變或已超出半徑，就不再
-    -- 屬於掃描時那個 player|group bucket
-    if nearestPlayer(animal, players, radius) ~= job.playerObj then
-        return "gone"
+    -- 全域 plan 沒有玩家歸屬可言：它的桶就是「全服已載入的這一群」，動物走到哪裡都還在桶裡。
+    -- 這道重驗只對 per-player plan 成立——對全域 plan 套用的話，凡是站在任何玩家半徑內的
+    -- 候選都會因 nearestPlayer ~= nil 而全數判成 gone，全域上限就只剩「清遠處」的效果
+    if not plan.global then
+        -- 重新套用**目前**在線玩家與**目前**掃描半徑。nearest 改變或已超出半徑，就不再
+        -- 屬於掃描時那個 player|group bucket
+        if nearestPlayer(animal, players, radius) ~= job.playerObj then
+            return "gone"
+        end
     end
-    -- 分類同樣用本 tick 重建的圈地快照：新建／調整圈地後立即生效
-    if classifyAnimal(animal, zoneCache) ~= (plan.zone and "zone" or "stray") then
+    -- 分類同樣用本 tick 重建的圈地快照：新建／調整圈地後立即生效。
+    -- 本模組只有散養 plan（圈養歸農場治理），候選變成 zone/protected 一律視為離開
+    if classifyAnimal(animal, zoneCache) ~= "stray" then
         return "gone"
     end
     return "removable"
 end
 
-local function removeCandidate(job, plan, candidate)
+local function removeCandidate(job, plan, candidate, budget)
     local animal = candidate.animal
     local wasWild = animal:isWild() == true
     -- IsoAnimal.java:3383-3405
     animal:remove()
+    -- 同一隻動物可能同時落在 per-player 與全域兩個 job 的 plan 裡（兩個桶共用 candidate）。
+    -- 沒有這個旗標，第二個 job 會二次呼叫 remove()：不會崩，但 job.removed 虛高、
+    -- 預算被重複扣、AnimalSynchronizationManager 再發一次刪除封包
+    candidate.removed = true
     job.removed = job.removed + 1
     removalBudget = removalBudget - 1
+    budget.removals = budget.removals - 1
     if wasWild then
         job.wildRemoved = job.wildRemoved + 1
-    end
-    if plan.zone then
-        job.zonedRemoved = job.zonedRemoved + 1
     end
 end
 
@@ -328,15 +340,16 @@ local function advancePlan(job)
 end
 
 -- 每 tick 消化移除佇列。兩個獨立預算：
---   ANIMALS_PER_TICK       封頂真正的 remove 次數（事故降壓的標的）
+--   budget.removals        跨模組共用的本 tick remove 上限（事故降壓的標的；scanner
+--                          先扣、農場治理拿剩餘——三個來源各自 3/tick 等於 9/tick，
+--                          會推翻 2026-08-23 活鎖事故後的降壓）
 --   ANIMAL_VISITS_PER_TICK 封頂重驗走訪量（主執行緒成本）
 --
 -- recount 必須在**同一個 tick**完整走完才可刪：跨 tick 累積 walkValid 會讓先驗的候選
 -- 在真正 remove 前變成過期快照，重現本次要修的誤刪。單一 plan 大於 visit budget 時
 -- 無法同 tick 證明現存數 → fail-closed，本輪跳過並記 animal_recount_unprovable。
-local function processRemovals()
+local function processRemovals(budget)
     local visitBudget = C.ANIMAL_VISITS_PER_TICK
-    local removeBudget = C.ANIMALS_PER_TICK
     local zoneCache = nil
     local players = Cleaner.getActivePlayers()
     local radius = tonumber(Cleaner.getOption("AnimalScanRadius")) or Cleaner.DEFAULTS.AnimalScanRadius
@@ -388,12 +401,11 @@ local function processRemovals()
                     done = advancePlan(job)
                 else
                     local index = 1
-                    while pending > 0 and removeBudget > 0 and removalBudget > 0
+                    while pending > 0 and budget.removals > 0 and removalBudget > 0
                         and index <= #valid do
-                        removeCandidate(job, plan, valid[index])
+                        removeCandidate(job, plan, valid[index], budget)
                         index = index + 1
                         pending = pending - 1
-                        removeBudget = removeBudget - 1
                     end
                     if pending <= 0 or index > #valid then
                         -- 已刪到目前上限，或所有可刪候選都用完（剩下的都是 blocked）
@@ -450,13 +462,16 @@ local function runAnimalScan(now)
         return
     end
     local defaultLimit = tonumber(Cleaner.getOption("MaxAnimalsPerGroup")) or Cleaner.DEFAULTS.MaxAnimalsPerGroup
-    -- 圈養獨立上限：0＝不清理圈養（完整保護，預設）
-    local zoneLimit = tonumber(Cleaner.getOption("MaxZoneAnimalsPerGroup")) or 0
+    -- 全服已載入散養總量上限：0＝停用（預設）。與 defaultLimit 是獨立維度，見 Core 的
+    -- MaxGlobalAnimalsPerGroup 說明——per-player 分桶必須先通過 nearestPlayer 過濾，
+    -- 離所有玩家超過 AnimalScanRadius 的已載入動物在那個維度裡根本不存在。
+    -- （圈養門檻不在這裡：圈養的清除與繁殖由 AnimalBreeding 以每座農場為單位治理）
+    local globalLimit = tonumber(Cleaner.getOption("MaxGlobalAnimalsPerGroup")) or 0
     local overrides = Cleaner.getAnimalLimitOverrides()
-    local zoneOverrides = Cleaner.getAnimalZoneLimitOverrides()
-    -- 散養、圈養與逐群組覆寫是各自獨立的上限；只檢查 MaxAnimalsPerGroup 會讓
-    -- 「散養 0 ＋ 圈養 80」或「散養 0 ＋ rat=20 覆寫」這類設定意外整個停擺
-    if not hasAnyAnimalLimit(defaultLimit, zoneLimit, overrides, zoneOverrides) then
+    local globalOverrides = Cleaner.getAnimalGlobalLimitOverrides()
+    -- 散養、全域與各自的逐群組覆寫都是獨立上限；只檢查其中一項會讓
+    -- 「散養 0 ＋ 全域 rat=20」這類設定意外整個停擺
+    if not hasAnyAnimalLimit(defaultLimit, globalLimit, overrides, globalOverrides) then
         -- 所有上限為 0 代表 bucket 生命週期中斷；兩種狀態都要清。否則恢復相同設定後，
         -- 舊 unprovable marker 會永久壓掉新的首次診斷
         warned = {}
@@ -476,6 +491,10 @@ local function runAnimalScan(now)
     local radius = tonumber(Cleaner.getOption("AnimalScanRadius")) or Cleaner.DEFAULTS.AnimalScanRadius
     local allowedGroups = Cleaner.getAnimalGroupSet()
     local zoneCache = buildZoneCache()
+    -- 玩家周邊維度是否真的有上限（共用預設或任一覆寫 > 0）：只開全服清除時，
+    -- nearestPlayer 是每輪 O(動物×玩家) 的白算——per-player 桶建了也永不超標。
+    -- 全域桶刻意不做半徑過濾，跳過距離計算不影響它
+    local wantPerPlayer = hasAnyAnimalLimit(defaultLimit, 0, overrides, {})
     local buckets = {}
 
     -- IsoCell.java:4565-4575；每輪讀一次，snapshot 成 Lua array 避免 LinkedList get(i) 的 O(n²)
@@ -488,40 +507,83 @@ local function runAnimalScan(now)
             local keyID = tostring(onlineID) .. ":" .. tostring(animal:getAnimalID()) .. ":" .. tostring(index)
             local group = getAnimalGroup(animal)
             if group and (allowedGroups._allowAll or allowedGroups[group]) then
-                local nearest = nearestPlayer(animal, players, radius)
-                if nearest then
-                    local key = playerKey(nearest) .. "|" .. group
-                    local bucket = buckets[key]
-                    if not bucket then
-                        bucket = {
-                            key = key,
+                local nearest = wantPerPlayer and nearestPlayer(animal, players, radius) or nil
+                -- 全域桶刻意**不**做半徑過濾：離所有玩家超過 radius 的動物在 per-player
+                -- 分桶裡根本不存在（nearest 為 nil 就整隻跳過），但它們仍在
+                -- IsoCell.objectList 裡、每 tick 全量更新。只在該群組真的設了全域上限時
+                -- 才建桶，沒設的群組維持原本的零額外配置
+                local effGlobalLimit = globalOverrides[group]
+                if effGlobalLimit == nil then
+                    effGlobalLimit = globalLimit
+                end
+                local globalBucket = nil
+                if effGlobalLimit > 0 then
+                    local globalKey = "*|" .. group
+                    globalBucket = buckets[globalKey]
+                    if not globalBucket then
+                        globalBucket = {
+                            key = globalKey,
                             group = group,
-                            playerObj = nearest,
+                            isGlobal = true,
+                            -- 全域桶沒有歸屬玩家：notifyPlayer 對 nil 直接 return
+                            -- （Core:749-751），所以警告與清理完成通知都不發、只留 log。
+                            -- 這是刻意的——全域上限是管理員的兜底工具，超額的動物可能
+                            -- 離所有玩家很遠（那正是它要處理的），沒有合理的通知對象
+                            playerObj = nil,
                             count = 0,
                             zoneCount = 0,
                             protected = 0,
                             candidates = {},
-                            zoneCandidates = {},
                             x = animal:getX(),
                             y = animal:getY(),
                             z = animal:getZ(),
                         }
-                        buckets[key] = bucket
+                        buckets[globalKey] = globalBucket
                     end
-                    -- 散養與圈養分開計數、各有上限；圈養上限支援逐群組覆寫，0 時該群組圈養視同絕對保護
+                end
+                if nearest or globalBucket then
+                    local playerBucket = nil
+                    if nearest then
+                        local key = playerKey(nearest) .. "|" .. group
+                        playerBucket = buckets[key]
+                        if not playerBucket then
+                            playerBucket = {
+                                key = key,
+                                group = group,
+                                playerObj = nearest,
+                                count = 0,
+                                zoneCount = 0,
+                                protected = 0,
+                                candidates = {},
+                                x = animal:getX(),
+                                y = animal:getY(),
+                                z = animal:getZ(),
+                            }
+                            buckets[key] = playerBucket
+                        end
+                    end
                     local class = classifyAnimal(animal, zoneCache)
-                    if class == "zone" then
-                        local effZoneLimit = zoneOverrides[group]
-                        if effZoneLimit == nil then
-                            effZoneLimit = zoneLimit
-                        end
-                        if effZoneLimit == 0 then
-                            class = "protected"
-                        end
-                    end
                     if class == "protected" then
-                        bucket.protected = bucket.protected + 1
+                        if playerBucket then
+                            playerBucket.protected = playerBucket.protected + 1
+                        end
+                        if globalBucket then
+                            globalBucket.protected = globalBucket.protected + 1
+                        end
+                    elseif class == "zone" then
+                        -- 圈養不歸本模組：清除與繁殖由 AnimalBreeding 以每座農場為單位
+                        -- 治理。zoneCount 只是診斷計數——animal_protected_over 的 log
+                        -- 靠它區分「沒有候選」與「候選全在圈地裡」
+                        if playerBucket then
+                            playerBucket.zoneCount = playerBucket.zoneCount + 1
+                        end
+                        if globalBucket then
+                            globalBucket.zoneCount = globalBucket.zoneCount + 1
+                        end
                     else
+                        -- candidate table 由兩個桶**共用同一張表**：Kahlua 的每個 Lua table
+                        -- 都是獨立的 KahluaTableImpl（底層 LinkedHashMap），各建一份會讓
+                        -- 配置量直接翻倍。共用是安全的——candidate 從建立到 flush 全程唯讀
                         local candidate = {
                             key = keyID,
                             -- 直接持有動物參照。計畫壽命只有幾個 tick（20 隻 ÷ 3 每 tick），
@@ -537,12 +599,13 @@ local function runAnimalScan(now)
                             wild = animal:isWild() == true,
                             baby = animal:isBaby() == true,
                         }
-                        if class == "zone" then
-                            bucket.zoneCount = bucket.zoneCount + 1
-                            bucket.zoneCandidates[#bucket.zoneCandidates + 1] = candidate
-                        else
-                            bucket.count = bucket.count + 1
-                            bucket.candidates[#bucket.candidates + 1] = candidate
+                        if playerBucket then
+                            playerBucket.count = playerBucket.count + 1
+                            playerBucket.candidates[#playerBucket.candidates + 1] = candidate
+                        end
+                        if globalBucket then
+                            globalBucket.count = globalBucket.count + 1
+                            globalBucket.candidates[#globalBucket.candidates + 1] = candidate
                         end
                     end
                 end
@@ -562,43 +625,49 @@ local function runAnimalScan(now)
     -- 這次呼叫（語意與舊版的 remainingBudget 相同——每輪最多 ANIMALS_PER_ROUND 隻）
     removalBudget = C.ANIMALS_PER_ROUND
     for _, bucket in ipairs(orderedBuckets) do
-        local limit = overrides[bucket.group]
-        if limit == nil then
-            limit = defaultLimit
-        end
-        local bucketZoneLimit = zoneOverrides[bucket.group]
-        if bucketZoneLimit == nil then
-            bucketZoneLimit = zoneLimit
-        end
-        -- limit 為 0 ＝ 該群組散養不清理（與圈養同語意）。少了這道 > 0 檢查，
-        -- 「散養 0 ＋ 圈養 80」的設定會變成 count > 0 恆為真，把散養全數清光
-        local strayOver = limit > 0 and bucket.count > limit
-        local zoneOver = bucketZoneLimit > 0 and bucket.zoneCount > bucketZoneLimit
-        if not strayOver and not zoneOver then
-            warned[bucket.key] = nil
-            unprovableWarned[bucket.key] = nil
+        -- plans 為空＝這個桶沒有任何維度超標。用 #plans 當統一判準，而不是各維度的
+        -- over 旗標——加維度時只要在對應分支裡 push plan，收尾的警告記錄回收不必跟著改
+        local plans = {}
+        local scope, warnCount, warnLimit
+        local emergency = false
+        if bucket.isGlobal then
+            -- 全域桶只有散養一個維度（圈養刻意不納入，見掃描迴圈的說明）
+            local bucketGlobalLimit = globalOverrides[bucket.group]
+            if bucketGlobalLimit == nil then
+                bucketGlobalLimit = globalLimit
+            end
+            if bucketGlobalLimit > 0 and bucket.count > bucketGlobalLimit then
+                scope = "global"
+                warnCount = bucket.count
+                warnLimit = bucketGlobalLimit
+                emergency = bucket.count > C.ANIMAL_EMERGENCY_MULTIPLIER * bucketGlobalLimit
+                -- global=true 讓 inspectCandidate 跳過玩家歸屬重驗（見該函式說明）
+                plans[1] = { list = bucket.candidates, limit = bucketGlobalLimit, zone = false, global = true }
+            end
         else
-            -- 緊急加速只對「真的超標的那一側」成立，否則 limit=0 時會恆為真
-            local emergency = (strayOver and bucket.count > C.ANIMAL_EMERGENCY_MULTIPLIER * limit)
-                or (zoneOver and bucket.zoneCount > C.ANIMAL_EMERGENCY_MULTIPLIER * bucketZoneLimit)
-            -- 觸發來源：stray（散養）／zone（圈養：圈地/雞舍）／both（同時）——警告措辭與 log 據此區分
-            local scope = (strayOver and zoneOver) and "both" or (zoneOver and "zone" or "stray")
-            -- 顯示觸發那一側的數字：純圈養超標就報圈養數，其餘（含 both）報散養數
-            local warnCount = (scope == "zone") and bucket.zoneCount or bucket.count
-            local warnLimit = (scope == "zone") and bucketZoneLimit or limit
-            local confirmed = emergency or warnBucket(bucket, now, scope, warnCount, warnLimit)
-            if confirmed then
-                -- 散養超額先清，圈養超額其次；兩邊各自刪到剩各自的上限。
+            local limit = overrides[bucket.group]
+            if limit == nil then
+                limit = defaultLimit
+            end
+            -- limit 為 0 ＝ 該群組散養不清理。少了這道 > 0 檢查，「散養 0 ＋ 全域 rat=20」
+            -- 這類設定會變成 count > 0 恆為真，把散養全數清光
+            if limit > 0 and bucket.count > limit then
+                emergency = bucket.count > C.ANIMAL_EMERGENCY_MULTIPLIER * limit
+                scope = "stray"
+                warnCount = bucket.count
+                warnLimit = limit
                 -- **帶 limit 而不是 excess**：excess 是掃描當時的差額，跨 tick 就過期了；
                 -- processRemovals 每個 tick 重數現存數再減 limit，才不會把已回到上限內的
                 -- 群組繼續刪（AGENTS.md 對跨 tick 刪除佇列的硬規則）
-                local plans = {}
-                if strayOver then
-                    plans[#plans + 1] = { list = bucket.candidates, limit = limit, zone = false }
-                end
-                if zoneOver then
-                    plans[#plans + 1] = { list = bucket.zoneCandidates, limit = bucketZoneLimit, zone = true }
-                end
+                plans[1] = { list = bucket.candidates, limit = limit }
+            end
+        end
+        if #plans == 0 then
+            warned[bucket.key] = nil
+            unprovableWarned[bucket.key] = nil
+        else
+            local confirmed = emergency or warnBucket(bucket, now, scope, warnCount, warnLimit)
+            if confirmed then
                 -- 排序在這裡做完，每個計畫只排一次；移除本身交給 processRemovals 跨 tick 攤平。
                 -- 一律 sortSafe，全庫零 table.sort（Kahlua 的 table.sort 是遞迴 quicksort，
                 -- 對已接近排序的輸入會退化成 O(n) 遞迴深度而 stack overflow，見 Core.sortSafe）
@@ -613,6 +682,9 @@ local function runAnimalScan(now)
                     key = bucket.key,
                     group = bucket.group,
                     playerObj = bucket.playerObj,
+                    -- flushRemoval 的 animal_clean scope 靠這個欄位區分「全域兜底」與
+                    -- 「per-player 熱點」（圈養的 scope=zone 由 AnimalBreeding 自己寫）
+                    isGlobal = bucket.isGlobal == true,
                     x = bucket.x,
                     y = bucket.y,
                     z = bucket.z,
@@ -624,8 +696,7 @@ local function runAnimalScan(now)
                     removed = 0,
                     wildRemoved = 0,
                     zonedRemoved = 0,
-                    -- NaN 用候選 key set 去重：同一 plan 跨多 tick 重數不能重複加；stray/zone
-                    -- 兩份 plan 互斥，但兩側各有 NaN 時必須加總而不是取 max
+                    -- NaN 用候選 key set 去重：同一 plan 跨多 tick 重數不能重複加
                     nanSeen = {},
                     nanSkipped = 0,
                     -- plan 候選數超過同 tick visit budget 時 fail-closed，專用診斷聚合在 job
@@ -659,7 +730,13 @@ local function runAnimalScan(now)
     end
 end
 
+-- 動物子系統的**單一 OnTick 進入點**：scanner（散養）先走，農場治理（AnimalBreeding
+-- 的 Cleaner.ranchTick）拿剩餘預算。兩個 Events.OnTick.Add 的執行順序取決於檔案載入
+-- 順序（字母序），跨模組共用預算不能建立在那種隱性依賴上——所以由這裡統一驅動。
+-- budget.removals 是本 tick 全子系統的 remove 上限（C.ANIMALS_PER_TICK；活鎖事故的
+-- 降壓標的是「每 frame 的 remove 密度」，三個來源各自 3/tick 等於 9/tick 會推翻它）
 local function onTick()
+    local budget = { removals = C.ANIMALS_PER_TICK }
     -- 總開關的檢查必須在這裡，不能只留在 runAnimalScan：佇列未排空時根本不會呼叫它，
     -- 於是「清理進行中關掉開關」會變成照樣刪完整批（物品側 0.3.0 修過同型問題）
     if Cleaner.getOption("AnimalCleanupEnabled") == false then
@@ -668,11 +745,21 @@ local function onTick()
         end
         warned = {}
         unprovableWarned = {}
+        -- 農場治理自己的停用收尾（清游標與警告記錄）也要跑
+        if Cleaner.ranchTick then
+            Cleaner.ranchTick(budget)
+        end
         return
     end
-    -- 先消化上一輪的移除佇列。每 tick 最多 C.ANIMALS_PER_TICK 隻，把同一份總額度攤平——
-    -- 降壓理由見 Core 的 ANIMALS_PER_TICK（2026-08-23 全服活鎖事故）
-    processRemovals()
+    -- 先消化上一輪的移除佇列，把同一份總額度攤平——降壓理由見 Core 的 ANIMALS_PER_TICK
+    -- （2026-08-23 全服活鎖事故）
+    processRemovals(budget)
+    -- 農場治理（圈養清除＋繁殖抑制）拿本 tick 剩餘的移除預算。call-time 解析：
+    -- AnimalBreeding 載入順序在前（字母序 B < S），函式已就緒；防禦性判空讓兩個檔案
+    -- 在任一載入順序下都不炸
+    if Cleaner.ranchTick then
+        Cleaner.ranchTick(budget)
+    end
     -- 佇列沒排空就不開新一輪掃描：否則計畫疊加，每輪 ANIMALS_PER_ROUND 的總額度失去意義
     if hasPendingRemovals() then
         return

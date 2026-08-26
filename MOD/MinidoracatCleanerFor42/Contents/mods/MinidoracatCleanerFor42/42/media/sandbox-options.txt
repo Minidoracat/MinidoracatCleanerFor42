@@ -123,7 +123,10 @@ option MinidoracatCleanerFor42.ProtectList
     translation = MinidoracatCleanerFor42_ProtectList,
 }
 
-/* ============ 動物清理 ============ */
+/* ============ 動物清理 ============
+   分組順序（UI 依定義序顯示，CustomSandboxOptions.options 按序註冊）：
+   總開關與白名單 → 非圈養（玩家周邊 → 全服）→ 圈養（每座農場：清除門檻 → 繁殖上限）
+   → 掃描參數 */
 
 option MinidoracatCleanerFor42.AnimalCleanupEnabled
 {
@@ -131,6 +134,14 @@ option MinidoracatCleanerFor42.AnimalCleanupEnabled
     default = true,
     page = MinidoracatCleanerAnimals,
     translation = MinidoracatCleanerFor42_AnimalCleanupEnabled,
+}
+
+option MinidoracatCleanerFor42.AnimalGroupList
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalGroupList,
 }
 
 option MinidoracatCleanerFor42.MaxAnimalsPerGroup
@@ -151,6 +162,24 @@ option MinidoracatCleanerFor42.AnimalLimitOverrides
     translation = MinidoracatCleanerFor42_AnimalLimitOverrides,
 }
 
+option MinidoracatCleanerFor42.MaxGlobalAnimalsPerGroup
+{
+    type = integer,
+    min = 0,
+    max = 5000,
+    default = 0,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_MaxGlobalAnimalsPerGroup,
+}
+
+option MinidoracatCleanerFor42.AnimalGlobalLimitOverrides
+{
+    type = string,
+    default = ,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_AnimalGlobalLimitOverrides,
+}
+
 option MinidoracatCleanerFor42.MaxZoneAnimalsPerGroup
 {
     type = integer,
@@ -169,12 +198,22 @@ option MinidoracatCleanerFor42.AnimalZoneLimitOverrides
     translation = MinidoracatCleanerFor42_AnimalZoneLimitOverrides,
 }
 
-option MinidoracatCleanerFor42.AnimalGroupList
+option MinidoracatCleanerFor42.MaxRanchBreedingPerGroup
+{
+    type = integer,
+    min = 0,
+    max = 1000,
+    default = 0,
+    page = MinidoracatCleanerAnimals,
+    translation = MinidoracatCleanerFor42_MaxRanchBreedingPerGroup,
+}
+
+option MinidoracatCleanerFor42.RanchBreedingOverrides
 {
     type = string,
     default = ,
     page = MinidoracatCleanerAnimals,
-    translation = MinidoracatCleanerFor42_AnimalGroupList,
+    translation = MinidoracatCleanerFor42_RanchBreedingOverrides,
 }
 
 option MinidoracatCleanerFor42.AnimalScanRadius

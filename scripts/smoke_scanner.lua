@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua，跑三十七個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua，跑四十一個情境並斷言結果。
 
     lua scripts/smoke_scanner.lua        （在 repo 根目錄執行）
 
@@ -70,6 +70,26 @@ DropStamp.lua / Client.lua / Tooltip.lua，跑三十七個情境並斷言結果�
             stray／zone 兩份 plan 各有 NaN 時 animal_nan 的 skipped 要加總
 情境三十七：Tooltip client 消費端真的讀新章——有章物品走自訂 render、無章物品退回原 render，
             小時章會進 Calendar/SimpleDateFormat 格式化路徑
+情境三十八：全域散養上限——離所有玩家超過 AnimalScanRadius 的已載入動物在 per-player
+            分桶裡根本不存在，只有全域桶看得到；全域上限只管散養（圈養是玩家資產）、
+            不對任何玩家發通知；兩個維度同時超標時同一隻不得被兩個 job 各刪一次
+            （remove 之後 getSquare() 仍回原格、isDead() 仍是 false，判定只能靠
+            candidate.removed 旗標）
+情境三十九：農場繁殖上限——達上限時取消還沒出生的（懷孕、受精蛋）而不刪現有牲畜；
+            由 EveryTenMinutes 武裝（遊戲時鐘）、OnTick 分批消化；懷孕按該物種一胎
+            最大隻數預留額度；取消時兩個欄位必須成對清零（只關 fertilized 而留著
+            fertilizedTime 會讓母禽永久不孕）；地面蛋要發 ItemStats；一整組相連圈地
+            與其中所有群組每個 pass 合計只付一次 getAllDZones；逐群組覆寫
+            （RanchBreedingOverrides）蓋過共用預設、覆寫 0＝該群組不抑制、
+            共用預設 0 時覆寫仍獨自武裝
+情境四十：農場清除——以「每座農場」（連通圈地）計數，兩段式警告（emergency 直清）；
+            同 tick 走訪＝天然 recount（不持跨 tick 候選）；與 scanner 共用 3/tick 移除
+            預算（各自 3/tick 會推翻活鎖降壓）；保護個體計入現存數但不可刪；NaN 計數
+            不刪；雞舍內計數不進候選；幼體優先；警告記錄隨群組消失回收
+情境四十一：清單產生器直通沙盒——token 級 WYSIWYG（預載原始 token 原樣保留、同 group
+            upsert 原位替換、整值寫回）、權限 gate 鏡射封包層 Capability 守門、
+            getOptionByName 先擋未宣告選項（set 對未知名拋 Java 例外）、SP 不送封包、
+            MP 走 copy→sendToServer 的 vanilla 封包鏈
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -156,6 +176,8 @@ local tickHandlers, clientCommandHandlers, worldMenuHandlers = {}, {}, {}
 -- OnServerCommand／OnCreatePlayer 供 Client／Tooltip 的 client 消費端用。
 -- 全域而非 local：main chunk 的 200 locals 額度已滿（見檔頭 STAMP_HOUR 同註）
 GAME_START_HANDLERS, TRANSACTION_HANDLERS, SERVER_COMMAND_HANDLERS, CREATE_PLAYER_HANDLERS = {}, {}, {}, {}
+-- EveryTenMinutes 供 AnimalBreeding 的抑制 arming 用（GameTime.java:636-650 的遊戲分鐘事件）
+TEN_MINUTE_HANDLERS = {}
 Events = setmetatable({}, {
     __index = function(_, name)
         return {
@@ -166,7 +188,8 @@ Events = setmetatable({}, {
                 elseif name == "OnGameStart" then GAME_START_HANDLERS[#GAME_START_HANDLERS + 1] = fn
                 elseif name == "OnProcessTransaction" then TRANSACTION_HANDLERS[#TRANSACTION_HANDLERS + 1] = fn
                 elseif name == "OnServerCommand" then SERVER_COMMAND_HANDLERS[#SERVER_COMMAND_HANDLERS + 1] = fn
-                elseif name == "OnCreatePlayer" then CREATE_PLAYER_HANDLERS[#CREATE_PLAYER_HANDLERS + 1] = fn end
+                elseif name == "OnCreatePlayer" then CREATE_PLAYER_HANDLERS[#CREATE_PLAYER_HANDLERS + 1] = fn
+                elseif name == "EveryTenMinutes" then TEN_MINUTE_HANDLERS[#TEN_MINUTE_HANDLERS + 1] = fn end
             end,
         }
     end,
@@ -174,12 +197,44 @@ Events = setmetatable({}, {
 
 -- java 風格容器（size()/get(i)，0-based）
 local function javaList(items)
-    return {
+    local list
+    list = {
         size = function() return #items end,
         get = function(_, i) return items[i + 1] end,
+        -- ArrayList.addAll：抑制路徑要把 hutch 內的動物併進 getAnimalsConnected 的結果
+        -- （照抄 vanilla ISDesignationAnimalZoneUI.lua:373）。真實的 getAnimalsConnected
+        -- 回的是**新** ArrayList（DesignationZoneAnimal.java:436），所以 addAll 不會污染
+        -- 引擎狀態——mock 的 zone 也必須每次回新 list 才忠於這一點
+        addAll = function(_, other)
+            local src = other and other._raw
+            if src then
+                for _, value in ipairs(src) do
+                    items[#items + 1] = value
+                end
+            end
+            return true
+        end,
+        -- HashMap.values()：Lua 端只會拿它去 addAll 或走 iterator
+        values = function() return list end,
+        iterator = function()
+            local index = 0
+            return {
+                hasNext = function() return index < #items end,
+                next = function()
+                    index = index + 1
+                    return items[index]
+                end,
+            }
+        end,
         _raw = items,
     }
+    return list
 end
+
+-- java.util.ArrayList 的最小暴露：AnimalBreeding 用 ArrayList.new() 當橋接容器
+-- （getAnimalInside():values() 回 package-private 的 HashMap$Values，只能當引數不能當
+-- receiver）。vanilla Lua 大量用例（ISItemSlot.lua:414 等）
+ArrayList = { new = function() return javaList({}) end }
 
 -- ===== 世界模型 =====
 local world = {}
@@ -241,11 +296,24 @@ function getCell()
     return {
         -- IsoCell.getAnimals()。預設 nil（＝世界沒有動物清單），既有情境因此完全不受
         -- AnimalScanner 的 onTick 影響；動物情境自行填 ANIMAL_ROSTER
+        -- IsoCell.getAnimals() 走 cell 的 objectList（IsoCell.java:4573-4582），而
+        -- `animal:remove()` → `delete()` → `removeFromWorld()` 會把自己從那份清單移除。
+        -- 所以已移除的動物**下一輪掃描就看不到了**——這裡必須跟著過濾，否則已刪動物會
+        -- 一直回到新一輪的計數裡（而它們的 getSquare() 仍回原格，見 makeTestAnimal 的
+        -- 忠於引擎說明），把「刪到上限」變成永不收斂。
+        -- 注意這只涵蓋「跨輪」：同一輪的 plan.list 直接持有 candidate 參照，不經這裡，
+        -- 那條由生產程式碼的 candidate.removed 旗標負責。
         getAnimals = function()
             if not ANIMAL_ROSTER then
                 return nil
             end
-            return javaList(ANIMAL_ROSTER)
+            local alive = {}
+            for _, animal in ipairs(ANIMAL_ROSTER) do
+                if not animal.isGone() then
+                    alive[#alive + 1] = animal
+                end
+            end
+            return javaList(alive)
         end,
         getGridSquare = function(_, x, y, z)
             gridLookups = gridLookups + 1
@@ -478,12 +546,111 @@ AnimalDefinitions = { animals = {} }
 for atype, group in pairs(ANIMAL_GROUPS) do
     AnimalDefinitions.animals[atype] = { group = group }
 end
+-- 一胎最大隻數：抑制路徑按它預留額度（AnimalData.java:191-202 的分娩直接建立
+-- Rand.Next(minBaby, maxBaby+1) 隻）。取真實 vanilla 值的量級：rat 2-10、pig 5-10、
+-- 雞是蛋生（一顆蛋一隻）
+ANIMAL_MAX_BABY = { rattus = 10, hen = 1, doe = 1, sow = 10 }
 function AnimalDefinitions.getDef(atype)
     local group = ANIMAL_GROUPS[atype]
     if not group then
         return nil
     end
-    return { getGroup = function() return group end }
+    return {
+        getGroup = function() return group end,
+        getMaxBaby = function() return ANIMAL_MAX_BABY[atype] or 1 end,
+    }
+end
+
+-- 地面蛋改完受精狀態後要發的 ItemStats（LuaManager.java:4340-4348）。計數而非只是 stub：
+-- 「有沒有同步」是可斷言的行為，漏發會讓附近 client 繼續顯示舊的受精狀態
+ITEM_STATS_SENT = {}
+function sendItemStats(item)
+    ITEM_STATS_SENT[#ITEM_STATS_SENT + 1] = item
+end
+
+-- opts：hatch（animalType，nil＝不是蛋）/ fertilized / fertilizedTime
+function makeTestEgg(opts)
+    return {
+        _opts = opts,
+        getAnimalHatch = function() return opts.hatch end,
+        isFertilized = function() return opts.fertilized == true end,
+        setFertilized = function(_, value) opts.fertilized = value end,
+        getFertilizedTime = function() return opts.fertilizedTime or 0 end,
+        setFertilizedTime = function(_, value) opts.fertilizedTime = value end,
+    }
+end
+
+-- opts：nests（每個巢箱一份蛋陣列）/ inside（hutch 內的動物）
+-- 巢箱以 0-based index 存取，且索引跑到 getMaxNestBox()**含**上界——vanilla 自己
+-- 初始化 maxNestBox + 1 個（IsoHutch.java:117-119）
+function makeTestHutch(opts)
+    local nests = opts.nests or {}
+    return {
+        _opts = opts,
+        getMaxNestBox = function() return #nests - 1 end,
+        getNestBox = function(_, index)
+            local eggs = nests[index + 1]
+            if not eggs then
+                return nil
+            end
+            return {
+                getEggsNb = function() return #eggs end,
+                getEgg = function(_, i) return eggs[i + 1] end,
+            }
+        end,
+        getAnimalInside = function() return javaList(opts.inside or {}) end,
+    }
+end
+
+-- opts：id / x / y / z / animals / hutches / ground / component
+-- component 省略時就是自己一個元件。
+-- **per-zone getter 忠於引擎**：getAnimals/getHutchs/getFoodOnGround 回引擎內部清單的
+-- 直接參照（DesignationZoneAnimal.java:395/:431/:475，無複製）——mock 回包在 javaList
+-- 裡的同一份 opts 表，生產程式碼若誤 addAll 就會污染 fixture 而被斷言抓到。
+-- getAnimals 過濾已移除的動物：animal:remove() → removeFromWorld → dZone.removeAnimal
+-- （IsoAnimal.java:1226-1228），移除後就不在 zone.animals 裡
+function makeTestZone(opts)
+    local zone
+    zone = {
+        _opts = opts,
+        getId = function() return opts.id end,
+        getX = function() return opts.x or 100 end,
+        getY = function() return opts.y or 100 end,
+        getZ = function() return opts.z or 0 end,
+        getW = function() return opts.w or 10 end,
+        getH = function() return opts.h or 10 end,
+        getAnimals = function()
+            local alive = {}
+            for _, animal in ipairs(opts.animals or {}) do
+                if not animal.isGone or not animal.isGone() then
+                    alive[#alive + 1] = animal
+                end
+            end
+            return javaList(alive)
+        end,
+        getHutchs = function() return javaList(opts.hutches or {}) end,
+        getFoodOnGround = function()
+            local objs = {}
+            for _, egg in ipairs(opts.ground or {}) do
+                objs[#objs + 1] = { getItem = function() return egg end }
+            end
+            return javaList(objs)
+        end,
+        _component = function() return opts.component or { zone } end,
+    }
+    return zone
+end
+
+-- getAllDZones(nil, zone, nil)：回整個連通元件（DesignationZoneAnimal.java:58-110）。
+-- 計數器是效能契約的量尺：農場治理每個元件每個 pass 只准付一次（設計評審 codex lane
+-- 的成本模型——它的遞迴內部對每個邊界格線性掃全域圈地清單，是最貴的原語）
+GETALLDZONES_CALLS = 0
+DesignationZoneAnimal.getAllDZones = function(_, zone, _)
+    GETALLDZONES_CALLS = GETALLDZONES_CALLS + 1
+    if not zone or not zone._component then
+        return javaList({})
+    end
+    return javaList(zone._component())
 end
 
 -- vanilla 動作類的最小 stub：installDropHooks 會 deref 它們的方法再包一層，
@@ -512,11 +679,34 @@ function makeTestAnimal(opts)
         getZ = function() return opts.z or 0 end,
         isWild = function() return opts.wild == true end,
         isBaby = function() return opts.baby == true end,
-        isDead = function() return gone end,
-        getSquare = function() return gone and nil or getOrMakeSquare(100, 100, 0) end,
+        -- **忠於引擎**：`IsoAnimal.remove()` → `delete()` → `removeFromSquare()`，而
+        -- IsoMovingObject 只清 current/last（IsoMovingObject.java:705）、IsoObject 只把自己
+        -- 從該格的清單移除（IsoObject.java:4539-4544）——**兩者都不清 this.square 欄位**，
+        -- remove() 也不設 dead。所以移除後 getSquare() 仍回原格、isDead() 仍是 false。
+        -- 讓 mock 說謊（移除後回 nil／true）會讓「同一隻被兩個 job 各刪一次」這類迴歸
+        -- 靜默穿過：生產程式碼判定已刪除只能靠自己蓋的 candidate.removed 旗標，
+        -- 測試必須逼它真的用那個旗標，而不是靠一個引擎不會給的訊號。
+        -- isGone 是 harness 自己的統計用（liveAnimals），與引擎 API 無關。
+        isDead = function() return opts.dead == true end,
+        getSquare = function() return opts.noSquare and nil or getOrMakeSquare(100, 100, 0) end,
         getCustomName = function() return opts.named end,
         isOnHook = function() return false end,
-        getData = function() return nil end,
+        -- AnimalData。**不能回 nil**：抑制路徑要問 isPregnant／改 setPregnant，而
+        -- classifyAnimal 也會問 getAttachedPlayer。欄位都寫回 opts，讓測試能在斷言時
+        -- 直接讀 animal._opts 檢查「有沒有真的被取消」
+        getData = function()
+            return {
+                getAttachedPlayer = function() return opts.attachedPlayer end,
+                isPregnant = function() return opts.pregnant == true end,
+                setPregnant = function(_, value) opts.pregnant = value end,
+                getPregnancyTime = function() return opts.pregnancyTime or 0 end,
+                setPregnancyTime = function(_, value) opts.pregnancyTime = value end,
+                isFertilized = function() return opts.fertilized == true end,
+                setFertilized = function(_, value) opts.fertilized = value end,
+                getFertilizedTime = function() return opts.fertilizedTime or 0 end,
+                setFertilizedTime = function(_, value) opts.fertilizedTime = value end,
+            }
+        end,
         isHeld = function() return false end,
         getVehicle = function() return nil end,
         getHutch = function() return opts.hutch end,
@@ -536,6 +726,9 @@ require "MinidoracatCleaner_Commands"
 -- 不載入就只能靠測試自己複製判定式（review 抓到的空轉假通過）。ANIMAL_ROSTER 預設 nil，
 -- 所以它掛進 tickHandlers 後對既有情境是 no-op。
 require "MinidoracatCleaner_AnimalScanner"
+-- AnimalBreeding：圈養抑制繁殖。預設 ANIMAL_ZONES 為空 ⇒ getAllZones():size() == 0 ⇒
+-- 它的 onTick 立刻 return，對既有情境是 no-op
+require "MinidoracatCleaner_AnimalBreeding"
 -- DropStamp：server 端 drop 路徑的 stampDrop／stampMove 呼叫點（改名漏改只有實機才炸）
 require "MinidoracatCleaner_DropStamp"
 
@@ -550,6 +743,12 @@ local function runTicks(count)
     for _ = 1, count do
         for _, fn in ipairs(tickHandlers) do fn() end
     end
+end
+
+-- 觸發 EveryTenMinutes（AnimalBreeding 的抑制 arming 入口）。全域函式：main chunk 的
+-- 200 locals 額度已滿
+function fireTenMinutes()
+    for _, fn in ipairs(TEN_MINUTE_HANDLERS) do fn() end
 end
 
 -- ===== 動物情境共用 helper =====
@@ -576,8 +775,14 @@ function countAnimalWarn()
     return total
 end
 
--- specs：{ { atype = "sow", count = 15, hutch = true }, ... }
+-- specs：{ { atype = "sow", count = 15, hutch = true, x = 500, y = 500 }, ... }
 -- hutch 為真 ⇒ getHutch() 非 nil ⇒ classifyAnimal 回 "zone"（圈養路徑，不必建圈地）
+-- x／y 省略時是 (100,100)＝主 player 腳邊。**指定遠座標是全域上限情境的必要條件**：
+-- per-player 分桶要先通過 nearestPlayer(radius)，離所有玩家超過 AnimalScanRadius 的動物
+-- 在那個維度裡根本不存在，只有全域桶看得到它們。
+-- 刻意不動 makeTestAnimal 的 getSquare（仍固定回 100,100 那格）：classifyAnimal 只用它
+-- 判「有沒有格子」，stray／zone 的實際判定走 getX/getY，而把座標接進 getSquare 會讓
+-- NaN 情境（掃描後才把座標改壞）去建出 key 為 nan 的假格子
 function seedAnimals(specs)
     ANIMAL_ROSTER = {}
     ANIMAL_REMOVED = {}
@@ -588,8 +793,8 @@ function seedAnimals(specs)
             ANIMAL_ROSTER[#ANIMAL_ROSTER + 1] = makeTestAnimal({
                 id = nextId,
                 atype = spec.atype,
-                x = 100,
-                y = 100,
+                x = spec.x or 100,
+                y = spec.y or 100,
                 hutch = spec.hutch and {} or nil,
             })
         end
@@ -967,6 +1172,7 @@ local SOURCES = {
     "client/MinidoracatCleaner_ContextMenu.lua",
     "client/MinidoracatCleaner_Tooltip.lua",
     "client/MinidoracatCleaner_Picker.lua",
+    "client/MinidoracatCleaner_Skin.lua",
 }
 local FORBIDDEN = { "next", "assert", "xpcall" }
 
@@ -1059,6 +1265,11 @@ local function fakeMenu()
 end
 
 ISCollapsableWindow = { derive = function() return {} end }
+-- Picker 的 VirtualList cell 在載入期 derive（實機由 ISCollapsableWindow 的 require 鏈
+-- 保證 ISPanel 存在，ISCollapsableWindow.lua:1）；harness 給同款極簡 stub
+ISPanel = { derive = function() return {} end }
+-- Picker 檔頭在載入期取 UIFont.Medium 當字級常數（實機 client 環境恆有此全域）
+UIFont = UIFont or { Small = "Small", Medium = "Medium" }
 ISContextMenu = { getNew = function() return fakeMenu() end }
 
 local realIsClient, realIsServer = isClient, isServer
@@ -2765,11 +2976,11 @@ check(#ANIMAL_REMOVED == partial32,
 check(countLogEvent("animal_clean") - cleanBefore32d == 1,
     "已刪除的部分仍落盤，且沒有重複寫出")
 
--- ⑤ 散養與圈養同時超標：兩個計畫都要被處理完。消化端是「做完第一個 plan 才換第二個」，
---    planIndex 的遞增若壞掉，圈養那半會被整批跳過而完全不清——而總量斷言抓不到它
---    （散養那半照樣刪滿），只有 zoned=／scope= 抓得到
+-- ⑤ scanner 只治理散養：zone 類（這裡用「屬於雞舍」觸發）動物完全不進 per-player
+--    候選，即使散養側超標也一隻不動。圈養的清除已搬到 AnimalBreeding 的農場治理
+--    （設計評審 A2），這裡沒有圈地 fixture ⇒ 農場治理也不會動它們。
 -- ④ 刻意把總開關關掉了，這裡要先開回來——否則 onTick 直接 return，連 resetWarned 都不會
--- 清到任何東西，下面三條會全部因為「一隻都沒清」而紅，看起來像 plan 切換壞了
+-- 清到任何東西，下面的斷言會全部因為「一隻都沒清」而紅
 sandbox.AnimalCleanupEnabled = true
 sandbox.AnimalGroupList = "*"
 sandbox.MaxZoneAnimalsPerGroup = 10
@@ -2779,13 +2990,12 @@ for i = 1, 15 do
     ANIMAL_ROSTER[i] = makeTestAnimal({ id = 6000 + i, atype = "sow", x = 100, y = 100 })
 end
 for i = 16, 30 do
-    -- getHutch 非 nil ⇒ classifyAnimal 回 "zone"（雞舍路徑，不必建圈地）
+    -- getHutch 非 nil ⇒ classifyAnimal 回 "zone"（圈地外雞舍：不歸 scanner、也沒有農場）
     ANIMAL_ROSTER[i] = makeTestAnimal({ id = 6000 + i, atype = "sow", x = 100, y = 100, hutch = {} })
 end
 ANIMAL_REMOVED = {}
 runTicks(14)
--- 全域而非 local：main chunk 已達 Lua 的 200 locals 硬上限（檔頭 STAMP_HOUR 同註，
--- 這裡再加一個 local 會直接編譯失敗）
+-- 全域而非 local：main chunk 已達 Lua 的 200 locals 硬上限（檔頭 STAMP_HOUR 同註）
 ANIMAL_CLEAN_LINE = nil
 for i = #logLines, 1, -1 do
     if logLines[i]:find("[animal_clean]", 1, true) then
@@ -2793,12 +3003,19 @@ for i = #logLines, 1, -1 do
         break
     end
 end
-check(#ANIMAL_REMOVED == 10,
-    "散養超 5 ＋ 圈養超 5 ⇒ 共刪 10 隻（實際 " .. #ANIMAL_REMOVED .. "）")
-check(ANIMAL_CLEAN_LINE ~= nil and ANIMAL_CLEAN_LINE:find("zoned=5", 1, true) ~= nil,
-    "圈養那個計畫也被處理（zoned=5；plan 切換漏掉第二個計畫時轉紅）")
-check(ANIMAL_CLEAN_LINE ~= nil and ANIMAL_CLEAN_LINE:find("scope=both", 1, true) ~= nil,
-    "log 的 scope 反映兩側都清了")
+check(#ANIMAL_REMOVED == 5,
+    "散養超 5 ＋ 雞舍 15 隻 ⇒ 只刪散養超額的 5 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+HUTCH_ALIVE_32 = 0
+for i = 16, 30 do
+    if not ANIMAL_ROSTER[i].isGone() then
+        HUTCH_ALIVE_32 = HUTCH_ALIVE_32 + 1
+    end
+end
+check(HUTCH_ALIVE_32 == 15,
+    "雞舍動物一隻不動（scanner 跳過 zone 類；實際存活 " .. HUTCH_ALIVE_32 .. "）")
+check(ANIMAL_CLEAN_LINE ~= nil and ANIMAL_CLEAN_LINE:find("scope=stray", 1, true) ~= nil
+        and ANIMAL_CLEAN_LINE:find("zoned=0", 1, true) ~= nil,
+    "log 的 scope=stray、zoned=0（scanner 不再有圈養維度）")
 
 ANIMAL_ROSTER = nil
 sandbox.AnimalGroupList = nil
@@ -3125,17 +3342,19 @@ check(#ANIMAL_REMOVED == 2,
     "延後的 400-candidate job 下 tick 取得完整 budget 並前進（沒有餓死）")
 sandbox.AnimalLimitOverrides = nil
 
--- ③ 同一 job 的 stray／zone 兩份 plan 各一隻 NaN：skipped 要加總成 2，而不是取 max=1。
+-- ③ 散養 plan 的 NaN：候選重驗時座標壞掉 ⇒ 不刪但計入現存數（blocked），且同一 job
+--    跨多個 tick 重數也只在 animal_nan 記一次（nanSeen 去重）。圈養側已無 scanner plan
+--    （農場治理有自己的 NaN 防護，見情境四十），這裡只驗散養半邊
 sandbox.AnimalScanIntervalSeconds = 0
-sandbox.MaxZoneAnimalsPerGroup = 10
-seedAnimals({ { atype = "sow", count = 11 }, { atype = "sow", count = 11, hutch = true } })
+sandbox.MaxZoneAnimalsPerGroup = 0
+seedAnimals({ { atype = "sow", count = 12 } })
 resetAnimalWarned()
 ANIMAL_REMOVED = {}
 NAN_BEFORE = countLogEvent("animal_nan")
 runTicks(1)
 runTicks(1)
 ANIMAL_ROSTER[1]._opts.x = 0 / 0
-ANIMAL_ROSTER[12]._opts.z = 0 / 0
+ANIMAL_ROSTER[2]._opts.z = 0 / 0
 runTicks(10)
 ANIMAL_NAN_LINE = nil
 for i = #logLines, 1, -1 do
@@ -3145,11 +3364,11 @@ for i = #logLines, 1, -1 do
     end
 end
 check(#ANIMAL_REMOVED == 2,
-    "散養超 1 ＋ 圈養超 1 ⇒ 正常候選共刪 2 隻（實際 " .. #ANIMAL_REMOVED .. "）")
+    "散養超 2、其中 2 隻 NaN ⇒ 刪掉 2 隻正常候選收到上限（實際 " .. #ANIMAL_REMOVED .. "）")
 check(countLogEvent("animal_nan") - NAN_BEFORE == 1,
-    "兩個 plan 的 NaN 仍聚合成一行")
+    "NaN 聚合成一行（跨 tick 重數不重複寫）")
 check(ANIMAL_NAN_LINE ~= nil and ANIMAL_NAN_LINE:find("skipped=2", 1, true) ~= nil,
-    "跨 plan 的 NaN 跳過數加總為 2（取 max 時會只有 1）")
+    "兩隻 NaN 都被計入 skipped（x 壞與 z 壞各一，實際行：" .. tostring(ANIMAL_NAN_LINE) .. "）")
 
 ANIMAL_ROSTER = nil
 sandbox.AnimalGroupList = nil
@@ -3224,6 +3443,836 @@ check(FORMAT_CALLS == 1 and CALENDAR_MS == STAMP_HOUR * 1000,
         .. " ms=" .. tostring(CALENDAR_MS) .. "）")
 end
 print()
+print("情境三十八：全域散養上限（跨玩家半徑的兜底維度）")
+do
+local C = MinidoracatCleaner.CONSTANTS
+onlineRoster = { player }
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.AnimalScanIntervalSeconds = 0
+sandbox.AnimalGlobalLimitOverrides = ""
+
+-- fixture：5 隻在主 player 腳邊 (100,100)、30 隻在 (500,500)。後者離玩家 400 格，
+-- 遠超 AnimalScanRadius 預設 64 ⇒ nearestPlayer 回 nil ⇒ **per-player 分桶完全看不到**。
+local function seed38()
+    seedAnimals({
+        { atype = "sow", count = 5 },
+        { atype = "sow", count = 30, x = 500, y = 500 },
+    })
+end
+
+-- ① 對照組：全域上限關閉時，遠處那 30 隻不受任何約束。
+--    per-player 上限 10 只看得到腳邊 5 隻（未超標），所以整輪零刪除。
+--    這條同時證明「遠處動物確實在 per-player 維度之外」——② 的清理只可能來自全域桶
+sandbox.MaxAnimalsPerGroup = 10
+sandbox.MaxZoneAnimalsPerGroup = 0
+sandbox.MaxGlobalAnimalsPerGroup = 0
+seed38()
+resetAnimalWarned()
+runTicks(12)
+check(liveAnimals() == 35, "前提：fixture 的 35 隻都在（實際 " .. liveAnimals() .. "）")
+check(#ANIMAL_REMOVED == 0,
+    "全域上限關閉 ⇒ 離玩家 400 格的 30 隻完全不受管（實際刪 " .. #ANIMAL_REMOVED .. "）")
+
+-- ② 全域上限 20：全服 35 隻超標 15。刻意讓 35 不到 2×20，否則會走 emergency 直接跳過
+--    第一輪警告，「第一輪只警告」那條前提就驗不到了
+sandbox.MaxGlobalAnimalsPerGroup = 20
+seed38()
+resetAnimalWarned()
+SENT38 = #sentCommands
+runTicks(1)
+check(#ANIMAL_REMOVED == 0, "前提：全域桶第一輪也只警告、不刪")
+runTicks(12)
+check(#ANIMAL_REMOVED == 15,
+    "全域上限 20 ⇒ 35 隻刪到剩 20（實際刪 " .. #ANIMAL_REMOVED .. "）")
+check(liveAnimals() == 20, "剩餘等於全域上限 20（實際 " .. liveAnimals() .. "）")
+check(countLogEvent("animal_clean") > 0, "活性：確實寫了 animal_clean")
+-- 全域桶的 playerObj 是 nil ⇒ notifyPlayer 直接 return（Core:749-751）。把 playerObj
+-- 改成某個玩家的變異會在這裡轉紅
+ZONE38 = 0
+for index = SENT38 + 1, #sentCommands do
+    local sent = sentCommands[index]
+    if sent.args and (sent.args.kind == "animals") then
+        ZONE38 = ZONE38 + 1
+    end
+end
+check(ZONE38 == 0,
+    "全域桶不對任何玩家發警告／清理通知（超額動物可能離所有人都很遠，實際 "
+        .. ZONE38 .. " 則）")
+
+-- ③ 全域上限只管散養：圈養上限刻意設 100（遠高於 30）——這樣 classifyAnimal 仍回 "zone"
+--    但 per-player 圈養桶不超標。
+--    全域上限取 20 而非 10 是必要的：下面用「有沒有寫超標警告」當可觀測輸出，而
+--    `confirmed = emergency or warnBucket(...)` 是短路求值——count 超過 2×limit 時
+--    emergency 為真，warnBucket 根本不會執行、一則警告都不會寫，斷言就變成永遠全綠。
+--    30 < 2×20 保證走的是正常的「先警告」路徑
+sandbox.MaxAnimalsPerGroup = 0
+sandbox.MaxZoneAnimalsPerGroup = 100
+sandbox.MaxGlobalAnimalsPerGroup = 20
+seedAnimals({ { atype = "sow", count = 30, hutch = true, x = 500, y = 500 } })
+resetAnimalWarned()
+WARN38 = countAnimalWarn()
+runTicks(12)
+check(#ANIMAL_REMOVED == 0,
+    "全域上限只管散養 ⇒ 30 隻圈養一隻不動（實際刪 " .. #ANIMAL_REMOVED .. "）")
+-- **斷言要打在安全網之前。** inspectCandidate 最後一道 class 比對（plan.zone 為 false
+-- 時只認 "stray"）是第二層防護，會把誤收的圈養候選全部剔成 gone——所以「沒刪」這條
+-- 對「掃描階段有沒有誤收」完全不敏感：把分流變異成「全域桶也收 zone 候選」時，上面
+-- 那條照樣全綠（實測）。第一手可觀測輸出是超標警告：誤把 30 隻圈養算進全域 count
+-- 就會寫出一則假的 scope=global 警告，即使最終一隻都沒刪
+check(countAnimalWarn() == WARN38,
+    "全域桶不把圈養算進 count（否則會寫出假的超標警告，實際新增 "
+        .. (countAnimalWarn() - WARN38) .. " 則）")
+-- 活性對照組：**唯一變數是 hutch**。同座標、同數量、同設定，只是不再是圈養——
+-- 全域上限就會清它們。這才證明 ③ 的零刪除來自「全域只管散養」，而不是 fixture
+-- 根本沒進掃描。
+-- 刻意不用「把圈養上限調小」當活性：遠處動物的 nearestPlayer 是 nil ⇒ per-player
+-- 圈養桶根本不會建立，那條斷言永遠是 0，只會變成第二個假通過
+seedAnimals({ { atype = "sow", count = 30, x = 500, y = 500 } })
+resetAnimalWarned()
+runTicks(12)
+check(#ANIMAL_REMOVED > 0,
+    "活性：同批遠處 fixture 若不是圈養，全域上限確實會清（實際刪 "
+        .. #ANIMAL_REMOVED .. "）")
+
+-- ④ 兩個維度同時超標時，同一隻動物不得被兩個 job 各刪一次。
+--    20 隻全在腳邊 ⇒ per-player 桶與全域桶看到的是**同一批** candidate（刻意共用同一張
+--    table 以免配置翻倍）。20 不到 2×12，所以不走 emergency。
+sandbox.MaxAnimalsPerGroup = 12
+sandbox.MaxZoneAnimalsPerGroup = 0
+sandbox.MaxGlobalAnimalsPerGroup = 12
+seedAnimals({ { atype = "sow", count = 20 } })
+resetAnimalWarned()
+runTicks(12)
+check(#ANIMAL_REMOVED > 0,
+    "活性：兩個維度同時超標時確實有刪除發生（實際 " .. #ANIMAL_REMOVED .. "）")
+DUP38 = 0
+SEEN38 = {}
+for _, id in ipairs(ANIMAL_REMOVED) do
+    if SEEN38[id] then
+        DUP38 = DUP38 + 1
+    end
+    SEEN38[id] = true
+end
+-- 這條釘住 candidate.removed 旗標。**不能靠引擎狀態代替**：remove() 之後 getSquare()
+-- 仍回原格、isDead() 仍是 false（見 makeTestAnimal 的忠於引擎說明），所以第二個 job
+-- 的 inspectCandidate 會把已刪的判成 removable 並再刪一次。把那行旗標拿掉，這裡與
+-- 下面的剩餘數都會轉紅
+check(DUP38 == 0,
+    "同一隻動物不被兩個 job 各刪一次（實際重複 " .. DUP38 .. " 次）")
+check(liveAnimals() == 12,
+    "刪到兩個維度的共同上限 12，不會被第二個 job 追刪到更低（實際 "
+        .. liveAnimals() .. "）")
+
+-- ⑤ 覆寫是獨立維度：共用預設 0，只靠 AnimalGlobalLimitOverrides 也必須生效。
+--    hasAnyAnimalLimit 少查 globalOverrides 就會整套 early-return ⇒ 零刪除而轉紅
+sandbox.MaxAnimalsPerGroup = 0
+sandbox.MaxZoneAnimalsPerGroup = 0
+sandbox.MaxGlobalAnimalsPerGroup = 0
+sandbox.AnimalGlobalLimitOverrides = "pig=10"
+seedAnimals({ { atype = "sow", count = 30, x = 500, y = 500 } })
+resetAnimalWarned()
+runTicks(12)
+check(#ANIMAL_REMOVED == C.ANIMALS_PER_ROUND,
+    "三個共用上限都是 0，只靠全域逐群組覆寫仍會清（實際刪 " .. #ANIMAL_REMOVED .. "）")
+
+sandbox.AnimalCleanupEnabled = nil
+sandbox.AnimalGroupList = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.MaxAnimalsPerGroup = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
+sandbox.MaxGlobalAnimalsPerGroup = nil
+sandbox.AnimalGlobalLimitOverrides = nil
+end
+print()
+print("情境三十九：圈養抑制繁殖（取消未出生的，不動現有牲畜）")
+do
+onlineRoster = { player }
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.AnimalScanIntervalSeconds = 0
+-- AnimalScanner 與抑制路徑刻意用不同的動物來源：前者走 getCell():getAnimals()
+-- （＝ANIMAL_ROSTER），後者走 zone:getAnimalsConnected()。把 ROSTER 清空就能讓移除路徑
+-- 完全不參與，斷言「一隻都沒被刪」才是在測抑制、不是在測移除剛好沒觸發
+ANIMAL_ROSTER = {}
+
+-- 建一隻 fixture 動物：pregnant/pregnancyTime 直接寫進 opts，斷言時讀 animal._opts
+local function breeder(id, atype, pregnant, pregnancyTime)
+    return makeTestAnimal({
+        id = id,
+        atype = atype,
+        x = 100,
+        y = 100,
+        pregnant = pregnant,
+        pregnancyTime = pregnancyTime,
+    })
+end
+
+-- ① 懷孕被取消、成對清零，而且一隻動物都沒被刪。
+--    5 隻 pig（maxBaby 10）其中 2 隻懷孕，上限 10 ⇒ live 5 ＋ unborn 20 = 25，超額 15。
+--    取消第一隻剩 5、取消第二隻歸零 ⇒ 兩隻都取消
+PIG_A = breeder(1, "sow", true, 3)
+PIG_B = breeder(2, "sow", true, 90)
+ANIMAL_ZONES = { makeTestZone({ id = 1, animals = {
+    PIG_A, PIG_B, breeder(3, "sow"), breeder(4, "sow"), breeder(5, "sow"),
+} }) }
+sandbox.MaxRanchBreedingPerGroup = 10
+ANIMAL_REMOVED = {}
+-- 抑制由 EveryTenMinutes 武裝（遊戲分鐘事件；10 真實秒輪詢是 99.91% 白算，
+-- 設計評審 codex lane 的成本模型），OnTick 只消化已武裝的掃描
+fireTenMinutes()
+runTicks(2)
+check(PIG_A._opts.pregnant == false and PIG_B._opts.pregnant == false,
+    "兩隻懷孕都被取消（超額 15 > 兩胎共 20）")
+check(PIG_A._opts.pregnancyTime == 0 and PIG_B._opts.pregnancyTime == 0,
+    "pregnancyTime 一起清零（只關旗標會在 tooltip 留下殘留進度）")
+check(#ANIMAL_REMOVED == 0,
+    "抑制不刪動物（實際刪 " .. #ANIMAL_REMOVED .. "）")
+check(countLogEvent("animal_breed_suppress") > 0, "活性：寫了 animal_breed_suppress")
+
+-- ② 懷孕必須按該物種一胎最大隻數預留額度。
+--    5 隻 pig 其中 1 隻懷孕、上限 12：按 maxBaby 算是 5 + 10 = 15 > 12 ⇒ 要抑制；
+--    若每隻懷孕只算 1，就是 5 + 1 = 6 <= 12 ⇒ 不抑制。把 litterSize 變異成回 1 會轉紅
+PIG_C = breeder(11, "sow", true, 5)
+ANIMAL_ZONES = { makeTestZone({ id = 2, animals = {
+    PIG_C, breeder(12, "sow"), breeder(13, "sow"), breeder(14, "sow"), breeder(15, "sow"),
+} }) }
+sandbox.MaxRanchBreedingPerGroup = 12
+fireTenMinutes()
+runTicks(2)
+check(PIG_C._opts.pregnant == false,
+    "一胎按 maxBaby=10 預留 ⇒ 5 隻現存也會超過上限 12 而抑制")
+
+-- ③ 蛋：取消受精、成對清零，地面蛋要發 ItemStats、巢箱蛋不必。
+--    3 隻雞 ＋ 巢箱 2 顆 ＋ 地面 1 顆受精蛋，上限 4 ⇒ 6 - 4 = 2 顆要取消。
+--    地面蛋的 fertilizedTime 設成最小值，保證它一定在被取消的那批裡
+EGG_GROUND = makeTestEgg({ hatch = "hen", fertilized = true, fertilizedTime = 1 })
+EGG_NEST_A = makeTestEgg({ hatch = "hen", fertilized = true, fertilizedTime = 50 })
+EGG_NEST_B = makeTestEgg({ hatch = "hen", fertilized = true, fertilizedTime = 90 })
+ANIMAL_ZONES = { makeTestZone({
+    id = 3,
+    animals = { breeder(21, "hen"), breeder(22, "hen"), breeder(23, "hen") },
+    hutches = { makeTestHutch({ nests = { { EGG_NEST_A, EGG_NEST_B } } }) },
+    ground = { EGG_GROUND },
+}) }
+sandbox.MaxRanchBreedingPerGroup = 4
+ITEM_STATS_SENT = {}
+fireTenMinutes()
+runTicks(2)
+check(EGG_GROUND._opts.fertilized == false and EGG_NEST_A._opts.fertilized == false,
+    "受精時間最短的兩顆蛋被取消受精")
+check(EGG_NEST_B._opts.fertilized == true,
+    "最接近孵化的那顆保留（只取消到剛好回到上限）")
+check(EGG_GROUND._opts.fertilizedTime == 0,
+    "取消受精時 fertilizedTime 一起清零")
+check(#ITEM_STATS_SENT == 1 and ITEM_STATS_SENT[1] == EGG_GROUND,
+    "只有地面蛋發 ItemStats（巢箱蛋走 hutch 自己的同步，實際 "
+        .. #ITEM_STATS_SENT .. " 件）")
+
+-- ④ 共用預設 0 且無覆寫 ＝ 整套不處理（沒有布林總開關）。
+--    釘的是 onEveryTenMinutes 的 arming 守衛與 ranchTick 的上限守衛
+PIG_D = breeder(31, "sow", true, 5)
+ANIMAL_ZONES = { makeTestZone({ id = 4, animals = { PIG_D } }) }
+sandbox.MaxRanchBreedingPerGroup = 0
+fireTenMinutes()
+runTicks(2)
+check(PIG_D._opts.pregnant == true, "繁殖上限 0 ⇒ 一個懷孕都不取消（連 arming 都不發生）")
+
+-- ⑤ 動物分類總開關優先於繁殖上限：關掉就完全不動作（釘 onEveryTenMinutes 與 ranchTick
+--    兩道 AnimalCleanupEnabled 守衛）
+PIG_E = breeder(41, "sow", true, 5)
+ANIMAL_ZONES = { makeTestZone({ id = 5, animals = { PIG_E } }) }
+sandbox.MaxRanchBreedingPerGroup = 1
+sandbox.AnimalCleanupEnabled = false
+fireTenMinutes()
+runTicks(2)
+check(PIG_E._opts.pregnant == true, "總開關關閉 ⇒ 懷孕保留（繁殖上限已設也不動）")
+sandbox.AnimalCleanupEnabled = true
+fireTenMinutes()
+runTicks(2)
+check(PIG_E._opts.pregnant == false, "活性：總開關打開後同一個 fixture 立刻被抑制")
+
+-- ⑥ 相連圈地是一個元件，整組每個 pass 只付一次 getAllDZones；多個群組共用同一趟走訪。
+--    getAllDZones 的遞迴內部對每個邊界格線性掃全域圈地清單（DesignationZoneAnimal.java
+--    :58-110,316-325），是農場治理最貴的原語——「呼叫幾次」本身就是效能契約，
+--    純重構型性質只能用 mock 呼叫計數釘住
+PIG_F = breeder(51, "sow", true, 5)
+HEN_F = makeTestEgg({ hatch = "hen", fertilized = true, fertilizedTime = 2 })
+ZONE_F1 = makeTestZone({ id = 61, animals = { PIG_F, breeder(52, "hen"), breeder(53, "hen") },
+    ground = { HEN_F } })
+ZONE_F2 = makeTestZone({ id = 62 })
+ZONE_F1._opts.component = { ZONE_F1, ZONE_F2 }
+ZONE_F2._opts.component = { ZONE_F1, ZONE_F2 }
+ANIMAL_ZONES = { ZONE_F1, ZONE_F2 }
+sandbox.MaxRanchBreedingPerGroup = 1
+-- 只跑**一個** tick，且抑制只武裝一次：一個元件、mutation 需求 2，都在單 tick 的
+-- COMPONENTS_PER_TICK／MUTATIONS_PER_TICK 額度內，一個 tick 就走得完
+fireTenMinutes()
+GETALLDZONES_CALLS = 0
+runTicks(1)
+check(PIG_F._opts.pregnant == false and HEN_F._opts.fertilized == false,
+    "活性：同一個元件內 pig 與 chicken 兩個群組都被抑制")
+check(GETALLDZONES_CALLS == 1,
+    "相連圈地與多個群組合計只付一次 getAllDZones（實際 " .. GETALLDZONES_CALLS .. " 次）")
+
+-- ⑦ 逐群組覆寫：共用預設 0 時覆寫獨自武裝並抑制（arming 不可只看共用預設值）
+PIG_G = breeder(71, "sow", true, 5)
+ANIMAL_ZONES = { makeTestZone({ id = 71, animals = {
+    PIG_G, breeder(72, "sow"), breeder(73, "sow"), breeder(74, "sow"), breeder(75, "sow"),
+} }) }
+sandbox.MaxRanchBreedingPerGroup = 0
+sandbox.RanchBreedingOverrides = "pig=12"
+fireTenMinutes()
+runTicks(2)
+check(PIG_G._opts.pregnant == false,
+    "共用預設 0 時逐群組覆寫仍武裝並抑制（pig=12：5 現存＋10 預留超過）")
+
+-- ⑧ 覆寫 0＝該群組不抑制（與清除側「覆寫 0＝永不刪除」同一套 0 語意）
+PIG_H = breeder(81, "sow", true, 5)
+ANIMAL_ZONES = { makeTestZone({ id = 81, animals = {
+    PIG_H, breeder(82, "sow"), breeder(83, "sow"), breeder(84, "sow"), breeder(85, "sow"),
+} }) }
+sandbox.MaxRanchBreedingPerGroup = 10
+sandbox.RanchBreedingOverrides = "pig=0"
+fireTenMinutes()
+runTicks(2)
+check(PIG_H._opts.pregnant == true,
+    "覆寫 0 ⇒ 該群組不做繁殖抑制（共用預設 10 本來會抑制）")
+sandbox.RanchBreedingOverrides = nil
+ANIMAL_ZONES = {}
+ANIMAL_ROSTER = nil
+sandbox.AnimalCleanupEnabled = nil
+sandbox.AnimalGroupList = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.MaxRanchBreedingPerGroup = nil
+end
+print()
+print("情境四十：農場清除（每座農場計數、同 tick 重數、共用移除預算）")
+do
+onlineRoster = { player }
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalGroupList = "*"
+sandbox.AnimalScanIntervalSeconds = 0
+ANIMAL_ROSTER = {}
+
+local function sow(id, extra)
+    extra = extra or {}
+    return makeTestAnimal({
+        id = id,
+        atype = "sow",
+        x = extra.x or 100,
+        y = extra.y or 100,
+        z = extra.z,
+        baby = extra.baby,
+        named = extra.named,
+    })
+end
+
+local function aliveIn(zoneOpts)
+    local total = 0
+    for _, animal in ipairs(zoneOpts.animals or {}) do
+        if not animal.isGone() then
+            total = total + 1
+        end
+    end
+    return total
+end
+
+-- ① 兩段式：首輪只警告（廣播 scope=zone），下一輪仍超標才清；每 tick 清除 ≤ 3
+--    （共用預算），總量收到上限即停。15 隻、上限 10、15 < 2×10 ⇒ 不走 emergency
+ZONE_R1 = makeTestZone({ id = 101, animals = {} })
+for i = 1, 15 do
+    ZONE_R1._opts.animals[i] = sow(7000 + i)
+end
+ANIMAL_ZONES = { ZONE_R1 }
+sandbox.MaxZoneAnimalsPerGroup = 10
+ANIMAL_REMOVED = {}
+WARN40 = countAnimalWarn()
+SENT40 = #sentCommands
+runTicks(1)
+check(#ANIMAL_REMOVED == 0 and countAnimalWarn() - WARN40 == 1,
+    "首輪只警告不清（warn +1、removed 0，實際 " .. #ANIMAL_REMOVED .. "）")
+ZONEWARN40 = 0
+for index = SENT40 + 1, #sentCommands do
+    local sent = sentCommands[index]
+    if sent.args and sent.args.kind == "animals" and sent.args.scope == "zone" then
+        ZONEWARN40 = ZONEWARN40 + 1
+    end
+end
+check(ZONEWARN40 == 1,
+    "農場警告廣播給錨點附近玩家（scope=zone，實際 " .. ZONEWARN40 .. " 則）")
+PEAK40 = 0
+for _ = 1, 6 do
+    local before = #ANIMAL_REMOVED
+    runTicks(1)
+    local delta = #ANIMAL_REMOVED - before
+    if delta > PEAK40 then
+        PEAK40 = delta
+    end
+end
+check(#ANIMAL_REMOVED == 5 and aliveIn(ZONE_R1._opts) == 10,
+    "確認輪清到上限即停（刪 5 剩 10，實際刪 " .. #ANIMAL_REMOVED
+        .. " 剩 " .. aliveIn(ZONE_R1._opts) .. "）")
+check(PEAK40 <= MinidoracatCleaner.CONSTANTS.ANIMALS_PER_TICK,
+    "單 tick 清除不超過共用預算 " .. MinidoracatCleaner.CONSTANTS.ANIMALS_PER_TICK
+        .. "（實際峰值 " .. PEAK40 .. "）")
+
+-- ② 散養與農場同 tick 各自超標：**共用同一份 3/tick 預算**，單 tick 合計 ≤ 3。
+--    各自 3/tick（合計 6）會推翻活鎖事故的降壓——這條釘住跨模組共用預算。
+--    農場放 25 隻（> 2×10 走 emergency、超額 15＝5 個 tick 的量）**刻意讓農場清除
+--    還沒收完時散養佇列就開動**：兩來源必然撞同 tick，序列化的 fixture（各 15 隻）
+--    會讓兩邊自然錯開、共用預算的斷言空轉（變異驗證實測 0 FAIL）
+ZONE_R2 = makeTestZone({ id = 111, animals = {} })
+for i = 1, 25 do
+    ZONE_R2._opts.animals[i] = sow(7100 + i)
+end
+-- 散養上限必須顯式設 10：不設會吃 DEFAULTS 的 50，15 隻散養永不超標，
+-- 「共用預算」就只剩農場一個來源在測（假通過）
+sandbox.MaxAnimalsPerGroup = 10
+-- **先 reset 再掛 fixture**：resetAnimalWarned 會跑一個 tick，若 ZONE_R2 已掛上，
+-- emergency（25 > 2×10）會在那個 tick 就開始清、吃掉 3 隻，迴圈內的總量斷言就差 3
+-- （實際踩到：期望 20 實際 17）
+resetAnimalWarned()
+ANIMAL_ZONES = { ZONE_R2 }
+-- 散養群放 (130,100)：在玩家半徑 64 內、但在 ZONE_R2 矩形（100..110 ±buffer 2）外——
+-- 站進圈地矩形會被 classifyAnimal 判成 zone 而讓 scanner 跳過（那正是 ① 的語意）
+seedAnimals({ { atype = "sow", count = 15, x = 130 } })
+ANIMAL_REMOVED = {}
+PEAK40B = 0
+for _ = 1, 16 do
+    local before = #ANIMAL_REMOVED
+    runTicks(1)
+    local delta = #ANIMAL_REMOVED - before
+    if delta > PEAK40B then
+        PEAK40B = delta
+    end
+end
+check(#ANIMAL_REMOVED == 20,
+    "散養超 5 ＋ 農場超 15 都清完（實際 " .. #ANIMAL_REMOVED .. "）")
+check(PEAK40B <= MinidoracatCleaner.CONSTANTS.ANIMALS_PER_TICK,
+    "兩個來源同 tick 合計仍 ≤ 3（各自 3/tick 時會是 6 而轉紅，實際峰值 "
+        .. PEAK40B .. "）")
+-- 隔離：清掉散養 fixture 與上限，避免後續子情境的 ANIMAL_REMOVED 被殘餘散養清除污染
+ANIMAL_ROSTER = {}
+sandbox.MaxAnimalsPerGroup = nil
+resetAnimalWarned()
+
+-- ③ 保護個體計入現存數但絕不清除：12 隻全命名、上限 10 ⇒ 超標但一隻都刪不了，
+--    animal_protected_over 只記一次（edge-triggered，第二輪不重寫）
+ZONE_R3 = makeTestZone({ id = 121, animals = {} })
+for i = 1, 12 do
+    ZONE_R3._opts.animals[i] = sow(7200 + i, { named = "pet" .. i })
+end
+ANIMAL_ZONES = { ZONE_R3 }
+ANIMAL_REMOVED = {}
+PROT40 = countLogEvent("animal_protected_over")
+runTicks(4)
+check(#ANIMAL_REMOVED == 0, "全命名 ⇒ 一隻都不清（實際 " .. #ANIMAL_REMOVED .. "）")
+check(countLogEvent("animal_protected_over") - PROT40 == 0,
+    "cullCount 排除保護個體 ⇒ 未超標、無診斷（命名不計入可治理數）")
+
+-- ③b 混合：10 命名 ＋ 4 未命名、上限 10 ⇒ cullCount 4 未超標，一隻不清。
+--     把 isProtectedAnimal 從計數裡拿掉（live 全算進 cullCount）會變成 14 > 10 而誤刪
+ZONE_R3B = makeTestZone({ id = 122, animals = {} })
+for i = 1, 10 do
+    ZONE_R3B._opts.animals[i] = sow(7250 + i, { named = "keep" .. i })
+end
+for i = 11, 14 do
+    ZONE_R3B._opts.animals[i] = sow(7250 + i)
+end
+ANIMAL_ZONES = { ZONE_R3B }
+ANIMAL_REMOVED = {}
+runTicks(4)
+check(#ANIMAL_REMOVED == 0,
+    "命名不佔可治理額度：4 隻未命名 < 上限 10 ⇒ 不清（實際 " .. #ANIMAL_REMOVED .. "）")
+
+-- ④ NaN 座標：計入現存數但不清除（活鎖事故教訓），刪正常個體收到上限，
+--    animal_nan 記 skipped=2。12 隻超 2、其中 2 隻 NaN ⇒ 刪 2 隻正常的
+ZONE_R4 = makeTestZone({ id = 131, animals = {} })
+for i = 1, 12 do
+    ZONE_R4._opts.animals[i] = sow(7300 + i)
+end
+ZONE_R4._opts.animals[1]._opts.x = 0 / 0
+ZONE_R4._opts.animals[2]._opts.z = 0 / 0
+ANIMAL_ZONES = { ZONE_R4 }
+ANIMAL_REMOVED = {}
+NAN40 = countLogEvent("animal_nan")
+runTicks(4)
+check(#ANIMAL_REMOVED == 2 and not ZONE_R4._opts.animals[1].isGone()
+        and not ZONE_R4._opts.animals[2].isGone(),
+    "NaN 個體不清、刪 2 隻正常的收到上限（實際刪 " .. #ANIMAL_REMOVED .. "）")
+check(countLogEvent("animal_nan") - NAN40 >= 1,
+    "NaN 有診斷 log（skipped 計數）")
+
+-- ⑤ 雞舍內動物計入現存數但不進清除候選（已被 removeFromWorld，直接 remove 會留
+--    hutch.animalInside 殘留參照）。外 8 ＋ 內 4、上限 10 ⇒ 超 2、只刪外面的
+HUTCH_IN_40 = {}
+for i = 1, 4 do
+    HUTCH_IN_40[i] = sow(7400 + i)
+end
+ZONE_R5 = makeTestZone({ id = 141, animals = {},
+    hutches = { makeTestHutch({ inside = HUTCH_IN_40 }) } })
+for i = 1, 8 do
+    ZONE_R5._opts.animals[i] = sow(7410 + i)
+end
+ANIMAL_ZONES = { ZONE_R5 }
+ANIMAL_REMOVED = {}
+runTicks(4)
+HUTCH_ALIVE_40 = 0
+for i = 1, 4 do
+    if not HUTCH_IN_40[i].isGone() then
+        HUTCH_ALIVE_40 = HUTCH_ALIVE_40 + 1
+    end
+end
+check(#ANIMAL_REMOVED == 2 and HUTCH_ALIVE_40 == 4,
+    "外 8 ＋ 雞舍內 4 超 2 ⇒ 只刪外面的 2 隻、雞舍內不動（實際刪 "
+        .. #ANIMAL_REMOVED .. "、內存活 " .. HUTCH_ALIVE_40 .. "）")
+
+-- ⑤b 純雞舍內超額：外圈 0、內 12、上限 10 ⇒ 超 2 但候選為空，一隻都不能刪
+--    （animal_protected_over 記帳）。⑤ 只釘得住「內圈有計數」——外圈候選排序在前，
+--    就算內圈被誤收進候選也輪不到刪，變異不會轉紅（實測 0 FAIL）。這裡外圈歸零，
+--    誤收的內圈個體就是唯一候選，變異必轉紅
+HUTCH_IN_40B = {}
+for i = 1, 12 do
+    HUTCH_IN_40B[i] = sow(7450 + i)
+end
+ZONE_R5B = makeTestZone({ id = 142, animals = {},
+    hutches = { makeTestHutch({ inside = HUTCH_IN_40B }) } })
+ANIMAL_ZONES = { ZONE_R5B }
+ANIMAL_REMOVED = {}
+runTicks(4)
+HUTCH_ALIVE_40B = 0
+for i = 1, 12 do
+    if not HUTCH_IN_40B[i].isGone() then
+        HUTCH_ALIVE_40B = HUTCH_ALIVE_40B + 1
+    end
+end
+check(#ANIMAL_REMOVED == 0 and HUTCH_ALIVE_40B == 12,
+    "純雞舍內 12 超 2 ⇒ 一隻都不刪（實際刪 " .. #ANIMAL_REMOVED
+        .. "、內存活 " .. HUTCH_ALIVE_40B .. "）")
+
+-- ⑥ 幼體優先（損失最小）：13 隻含 3 幼體、上限 10 ⇒ 刪的 3 隻全是幼體
+ZONE_R6 = makeTestZone({ id = 151, animals = {} })
+for i = 1, 10 do
+    ZONE_R6._opts.animals[i] = sow(7500 + i)
+end
+for i = 11, 13 do
+    ZONE_R6._opts.animals[i] = sow(7500 + i, { baby = true })
+end
+ANIMAL_ZONES = { ZONE_R6 }
+ANIMAL_REMOVED = {}
+runTicks(4)
+BABY_GONE_40 = 0
+for i = 11, 13 do
+    if ZONE_R6._opts.animals[i].isGone() then
+        BABY_GONE_40 = BABY_GONE_40 + 1
+    end
+end
+check(#ANIMAL_REMOVED == 3 and BABY_GONE_40 == 3,
+    "超 3 且有 3 幼體 ⇒ 刪的全是幼體（實際刪 " .. #ANIMAL_REMOVED
+        .. "、幼體 " .. BABY_GONE_40 .. "）")
+
+-- ⑦ 天然 recount：警告輪之後、清除輪之前玩家自己處理掉超額 ⇒ 確認輪重新計數、
+--    一隻不清（每輪重新讀取成員清單，沒有跨 tick 候選快照可過期）
+ZONE_R7 = makeTestZone({ id = 161, animals = {} })
+for i = 1, 15 do
+    ZONE_R7._opts.animals[i] = sow(7600 + i)
+end
+ANIMAL_ZONES = { ZONE_R7 }
+ANIMAL_REMOVED = {}
+runTicks(1)
+check(#ANIMAL_REMOVED == 0, "前提：首輪只警告")
+for i = 1, 5 do
+    ZONE_R7._opts.animals[i].remove()
+end
+ANIMAL_REMOVED = {}
+runTicks(4)
+check(#ANIMAL_REMOVED == 0,
+    "警告後玩家自己減到上限 ⇒ 確認輪重數後一隻不清（實際 " .. #ANIMAL_REMOVED .. "）")
+
+-- ⑧ 警告記錄的生命週期：群組整組消失後 key 被回收，重新住滿要**重新走警告輪**，
+--    不可沿用過期記錄直接清理
+ZONE_R8 = makeTestZone({ id = 171, animals = {} })
+for i = 1, 15 do
+    ZONE_R8._opts.animals[i] = sow(7700 + i)
+end
+ANIMAL_ZONES = { ZONE_R8 }
+runTicks(1)
+for i = 1, 15 do
+    ZONE_R8._opts.animals[i].remove()
+end
+runTicks(2)
+for i = 16, 30 do
+    ZONE_R8._opts.animals[i] = sow(7700 + i)
+end
+ANIMAL_REMOVED = {}
+runTicks(1)
+check(#ANIMAL_REMOVED == 0,
+    "群組消失讓警告記錄回收 ⇒ 重新住滿的第一輪只警告、不沿用過期記錄清理（實際刪 "
+        .. #ANIMAL_REMOVED .. "）")
+
+ANIMAL_ZONES = {}
+ANIMAL_ROSTER = nil
+sandbox.AnimalCleanupEnabled = nil
+sandbox.AnimalGroupList = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
+end
+
+-- ===== 情境四十一：清單產生器直通沙盒 =====
+-- 重用 vanilla 沙盒面板封包鏈（本地 getSandboxOptions():set，MP 另建 copy →
+-- sendToServer；封包層以 Capability.SandboxOptions 守門，PacketTypes.java:411）。
+-- 不開 UI（createChildren 不跑），以 minimal instance 直測邏輯方法。
+print()
+print("情境四十一：清單產生器直通沙盒（token WYSIWYG、權限 gate、vanilla 封包鏈）")
+do
+check(MinidoracatCleaner.tokenKey("rat=5") == "rat", "tokenKey：覆寫 token 取 = 前段")
+check(MinidoracatCleaner.tokenKey("rat =5") == "rat", "tokenKey：= 前空白剝除")
+check(MinidoracatCleaner.tokenKey("Base.Log") == "Base.Log", "tokenKey：membership token 原樣")
+check(MinidoracatCleaner.tokenKey("=5") == "", "tokenKey：畸形 token 取空 key 不炸")
+check(MinidoracatCleaner.buildLimitToken("rat", "20") == "rat=20", "buildLimitToken：合法整數")
+check(MinidoracatCleaner.buildLimitToken("rat", " 7 ") == "rat=7", "buildLimitToken：容忍前後空白")
+check(MinidoracatCleaner.buildLimitToken("rat", "-1") == nil, "buildLimitToken：負數拒絕")
+check(MinidoracatCleaner.buildLimitToken("rat", "abc") == nil, "buildLimitToken：非數字拒絕")
+check(MinidoracatCleaner.buildLimitToken("rat", "2.5") == nil, "buildLimitToken：小數拒絕")
+check(MinidoracatCleaner.buildLimitToken("rat", "9999999") == nil, "buildLimitToken：超出 1000000 拒絕")
+check(MinidoracatCleaner.buildLimitToken("rat", "") == nil, "buildLimitToken：空字串拒絕")
+
+-- 環境 stub：SP 起步；apply 鏈全部可觀測
+local realIsClient41, realIsServer41 = isClient, isServer
+local realGetSandboxOptions41 = getSandboxOptions
+local realSandboxOptions41, realCapability41 = SandboxOptions, Capability
+PICKER_SET_CALLS = {}
+PICKER_SENT = 0
+PICKER_COPIED = 0
+PICKER_HALO = {}
+PICKER_HAS_CAP = false
+PICKER_VALUE_TEXT = ""
+PICKER_KNOWN_OPTIONS = {
+    ["MinidoracatCleanerFor42.AnimalLimitOverrides"] = true,
+    ["MinidoracatCleanerFor42.ProtectList"] = true,
+}
+function getSandboxOptions()
+    return {
+        getOptionByName = function(_, name)
+            return PICKER_KNOWN_OPTIONS[name] and {} or nil
+        end,
+        set = function(_, name, value)
+            PICKER_SET_CALLS[#PICKER_SET_CALLS + 1] = { name = name, value = value }
+        end,
+    }
+end
+SandboxOptions = {
+    new = function()
+        return {
+            copyValuesFrom = function() PICKER_COPIED = PICKER_COPIED + 1 end,
+            sendToServer = function() PICKER_SENT = PICKER_SENT + 1 end,
+        }
+    end,
+}
+Capability = { SandboxOptions = "SandboxOptions" }
+isClient = function() return false end
+isServer = function() return false end
+
+local pickerPlayer = {
+    getRole = function()
+        return { hasCapability = function(_, cap)
+            return PICKER_HAS_CAP == true and cap == Capability.SandboxOptions
+        end }
+    end,
+    setHaloNote = function(_, message) PICKER_HALO[#PICKER_HALO + 1] = tostring(message) end,
+}
+
+local function makePicker(mode)
+    local p = setmetatable({
+        playerObj = pickerPlayer,
+        mode = mode,
+        target = "",
+        targetDef = nil,
+        applyAllowed = false,
+        selectedValues = {},
+        selectedSet = {},
+        listCheckedSet = {},
+        listCheckedCount = 0,
+        resultCheckedSet = {},
+        resultCheckedCount = 0,
+        lastSearchText = "",
+        width = 1240,
+    }, { __index = MinidoracatCleanerPicker })
+    p.searchEntry = { getText = function() return "" end, setText = function() end }
+    p.valueEntry = { getText = function() return PICKER_VALUE_TEXT end, setVisible = function() end,
+        setEditable = function() end }
+    p.valueLabel = { setVisible = function() end }
+    p.applyButton = { setEnable = function() end }
+    p.setValueButton = { setTitle = function() end, setEnable = function() end, setVisible = function() end }
+    p.removeButton = { setTitle = function() end, setEnable = function() end }
+    p.addButton = { setTitle = function() end, setEnable = function() end }
+    p.listTitleLabel = { setName = function() end }
+    p.resultsList = { isVirtual = true, setItems = function() end }
+    p.selectedList = { isVirtual = true, setItems = function() end }
+    return p
+end
+
+-- ① 預載：現值切逗號成原始 token，原樣保留（不解析關鍵字、不 canonical 化——
+--    ProtectList 的關鍵字 token 無法無損反解，整值寫回時必須原樣通過）
+sandbox.AnimalLimitOverrides = "rat=5, 手寫token ,cow=2"
+local picker = makePicker("animals")
+picker.applyAllowed = picker:computeApplyAllowed()
+check(picker.applyAllowed == true, "SP 直接允許套用（無連線守門）")
+picker:applyTargetSelection({ key = "AnimalLimitOverrides", mode = "animals", withValue = true })
+check(#picker.selectedValues == 3
+    and picker.selectedValues[1] == "rat=5"
+    and picker.selectedValues[2] == "手寫token"
+    and picker.selectedValues[3] == "cow=2",
+    "預載現值為原始 token（手寫 token 原樣保留）")
+
+-- ② 上方勾選→批量加入：覆寫目標用上限值欄現值組 token，同 group 原位替換；
+--    加入後勾選清空
+PICKER_VALUE_TEXT = "9"
+picker:onResultClick({ value = "rat" })
+check(picker.resultCheckedCount == 1, "點結果列＝勾選")
+picker:onResultClick({ value = "rat" })
+check(picker.resultCheckedCount == 0, "再點一次＝取消勾選（結果清單）")
+picker:onResultClick({ value = "rat" })
+picker:onAddChecked()
+check(#picker.selectedValues == 3 and picker.selectedValues[1] == "rat=9",
+    "批量加入：同 group 原位替換保序（rat=5 → rat=9）")
+check(picker.resultCheckedCount == 0 and picker.resultCheckedSet["rat"] == nil,
+    "批量加入後勾選清空")
+
+-- ③ 非法上限值：整批不加入＋錯誤提示＋勾選保留（改好數值再按一次；
+--    多選原子性——一個非法全不加）
+PICKER_VALUE_TEXT = "abc"
+picker:onResultClick({ value = "pig" })
+picker:onResultClick({ value = "chicken" })
+check(picker.resultCheckedCount == 2, "結果清單多選累積")
+local haloBase = #PICKER_HALO
+picker:onAddChecked()
+check(#picker.selectedValues == 3, "非法上限值整批不加入")
+check(#PICKER_HALO == haloBase + 1
+    and PICKER_HALO[#PICKER_HALO]:find("BadValue", 1, true) ~= nil,
+    "非法上限值有錯誤提示")
+check(picker.resultCheckedCount == 2, "非法值不清勾選（修正數值後不必重勾）")
+PICKER_VALUE_TEXT = "4"
+picker:onAddChecked()
+check(#picker.selectedValues == 5
+    and picker.selectedValues[4] == "chicken=4"
+    and picker.selectedValues[5] == "pig=4",
+    "修正數值後批量加入成功（字母序 deterministic）")
+
+-- ④ 下方清單勾選＋批量設值：點列＝勾選/取消；「設定數值」把勾選項的 group
+--    全部改成值欄數值（原子性：非法整批不動、勾選保留）
+picker:onSelectedClick({ value = "rat=9" })
+check(picker.listCheckedCount == 1, "點目前清單列＝勾選")
+picker:onSelectedClick({ value = "rat=9" })
+check(picker.listCheckedCount == 0, "再點一次＝取消勾選")
+picker:onSelectedClick({ value = "rat=9" })
+picker:onSelectedClick({ value = "手寫token" })
+check(picker.listCheckedCount == 2, "多選勾選累積")
+PICKER_VALUE_TEXT = "abc"
+haloBase = #PICKER_HALO
+picker:onSetValueChecked()
+check(picker.selectedValues[1] == "rat=9" and #PICKER_HALO == haloBase + 1,
+    "批量設值遇非法數值：整批不動＋錯誤提示")
+check(picker.listCheckedCount == 2, "非法設值不清勾選（改好數值再按一次）")
+PICKER_VALUE_TEXT = "7"
+picker:onSetValueChecked()
+check(picker.selectedValues[1] == "rat=7"
+    and picker.selectedValues[2] == "手寫token=7"
+    and picker.selectedValues[3] == "cow=2",
+    "批量設值：勾選項全部改值且原位保序")
+check(picker.listCheckedCount == 0, "設值後勾選清空")
+
+-- ⑤ 批量移除勾選項（一次移掉三項）
+picker:onSelectedClick({ value = "cow=2" })
+picker:onSelectedClick({ value = "chicken=4" })
+picker:onSelectedClick({ value = "pig=4" })
+picker:onRemoveChecked()
+check(#picker.selectedValues == 2 and picker.selectedSet["cow"] == nil,
+    "批量移除勾選項（selectedSet 的 key 一起清）")
+
+-- ⑥ SP 套用：本地 set 整值寫回，不送封包
+picker:onApply()
+check(#PICKER_SET_CALLS == 1
+    and PICKER_SET_CALLS[1].name == "MinidoracatCleanerFor42.AnimalLimitOverrides"
+    and PICKER_SET_CALLS[1].value == "rat=7,手寫token=7",
+    "SP 套用：token join 整值寫回沙盒選項")
+check(PICKER_SENT == 0 and PICKER_COPIED == 0, "SP 不建封包、不送 server")
+
+-- ⑦ MP 無權限：UI gate 擋住（鏡射封包層 Capability 守門，避免「UI 成功、封包被拒」）
+isClient = function() return true end
+PICKER_HAS_CAP = false
+picker.applyAllowed = picker:computeApplyAllowed()
+check(picker.applyAllowed == false, "MP 無 Capability.SandboxOptions ⇒ 不允許")
+picker:onApply()
+check(#PICKER_SET_CALLS == 1, "無權限時 set 不被呼叫")
+
+-- ⑧ MP 有權限：本地 set ＋ copy → sendToServer（vanilla 封包鏈）
+PICKER_HAS_CAP = true
+picker.applyAllowed = picker:computeApplyAllowed()
+check(picker.applyAllowed == true, "MP 有 capability ⇒ 允許")
+picker:onApply()
+check(#PICKER_SET_CALLS == 2, "有權限時本地 set 生效")
+check(PICKER_COPIED == 1 and PICKER_SENT == 1,
+    "MP 套用走 copyValuesFrom → sendToServer")
+
+-- ⑨ 未宣告的沙盒選項：getOptionByName 先擋（set 對未知名拋 IllegalArgumentException，
+--    SandboxOptions.java:572-583——殘留 UI 撞上未載入本 MOD 宣告的存檔不可炸）
+picker:applyTargetSelection({ key = "NotDeclared", mode = "animals" })
+haloBase = #PICKER_HALO
+picker:onApply()
+check(#PICKER_SET_CALLS == 2, "未宣告選項：set 不被呼叫")
+check(#PICKER_HALO == haloBase + 1
+    and PICKER_HALO[#PICKER_HALO]:find("ApplyFailed", 1, true) ~= nil,
+    "未宣告選項有失敗提示")
+
+-- ⑩ membership 目標：預載＋批量勾選加入＋去重＋整值寫回（手寫關鍵字 token 無損）
+sandbox.ProtectList = "Base.Log, 關鍵字log"
+local picker2 = makePicker("items")
+picker2.applyAllowed = picker2:computeApplyAllowed()
+picker2:applyTargetSelection({ key = "ProtectList", mode = "items" })
+check(#picker2.selectedValues == 2, "membership 目標預載現值")
+picker2:onResultClick({ value = "Base.Axe" })
+picker2:onResultClick({ value = "Base.Hammer" })
+picker2:onAddChecked()
+check(#picker2.selectedValues == 4, "membership 批量勾選加入")
+picker2:onResultClick({ value = "Base.Axe" })
+picker2:onAddChecked()
+check(#picker2.selectedValues == 4, "membership 重複加入去重（upsert）")
+picker2:onApply()
+check(PICKER_SET_CALLS[#PICKER_SET_CALLS].value == "Base.Log,關鍵字log,Base.Axe,Base.Hammer",
+    "membership 整值寫回保序（手寫關鍵字 token 無損）")
+
+-- ⑪ 全選/取消：結果清單只動「可見項」且翻轉語意（全勾→全取消、否則補滿）；
+--    目前清單同一套
+picker2.shownEntries = { { value = "Base.Saw" }, { value = "Base.Screwdriver" } }
+picker2:onToggleAllResults()
+check(picker2.resultCheckedCount == 2, "全選：可見結果全勾")
+picker2:onResultClick({ value = "Base.Saw" })
+picker2:onToggleAllResults()
+check(picker2.resultCheckedCount == 2, "部分勾選時全選＝補到全滿")
+picker2:onToggleAllResults()
+check(picker2.resultCheckedCount == 0, "已全勾時再按＝全取消")
+picker2:onToggleAllList()
+check(picker2.listCheckedCount == #picker2.selectedValues and picker2.listCheckedCount > 0,
+    "目前清單全選（" .. tostring(picker2.listCheckedCount) .. " 項）")
+picker2:onToggleAllList()
+check(picker2.listCheckedCount == 0, "目前清單再按＝全取消")
+
+-- ⑩ 目標缺席（防禦分支）：Apply 不動作
+picker2.targetDef = nil
+local setBase = #PICKER_SET_CALLS
+picker2:onApply()
+check(#PICKER_SET_CALLS == setBase, "無目標時不寫沙盒")
+
+isClient = realIsClient41
+isServer = realIsServer41
+getSandboxOptions = realGetSandboxOptions41
+SandboxOptions = realSandboxOptions41
+Capability = realCapability41
+sandbox.AnimalLimitOverrides = nil
+sandbox.ProtectList = nil
+end
 if failures > 0 then
     print(failures .. " 項失敗")
     os.exit(1)

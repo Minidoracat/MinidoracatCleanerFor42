@@ -49,10 +49,45 @@ Cleaner.DEFAULTS = {
     TouchTraceEnabled = true,
     DebugMenuEnabled = false,
     MaxAnimalsPerGroup = 50,
+    -- 圈養動物的**清除**門檻，以「每座農場」（一組相連的動物圈地）為計數單位。0＝不清除。
+    -- 為什麼不是 per-player：農場是實體，一座可能橫跨兩位玩家的掃描半徑、也可能根本沒人
+    -- 在附近；用玩家分桶去數農場，數出來的不是「這座農場有幾隻」。而 vanilla 的受孕本來
+    -- 就以連通圈地為範圍（findFemaleToInseminate 走 getConnectedDZone()，AnimalData.java:1340），
+    -- 所以「農場」也是引擎自己的單位。
+    -- 註：在**圈地外**的雞舍裡的動物不屬於任何農場（IsoHutch 建立時查 getZoneF，沒圈地就
+    -- 不歸任何圈地，IsoHutch.java:98-101），因此不受這個上限約束＝完整保護。它們本來也
+    -- 不會繁殖（受孕要求公獸的 connectedDZone 非空，而 checkZone 對圈地外的動物會清空它，
+    -- IsoAnimal.java:616-619）。
     MaxZoneAnimalsPerGroup = 0,
+    -- 圈養動物的**繁殖**上限，同樣以每座農場計數。0＝不限制。
+    -- 與上面的清除門檻是**兩個獨立行為**，刻意分開兩個數字：
+    --   清除＝把多出來的動物移除（不可逆，等於沒收玩家資產）
+    --   繁殖上限＝只取消還沒出生的（懷孕、受精蛋），一隻現有牲畜都不動
+    -- 分開之後「只抑制、完全不刪」才表達得出來（清除門檻留 0、只設繁殖上限），而那大概
+    -- 是多數伺服器真正想要的配置。兩個都設時繁殖上限應該 ≤ 清除門檻，否則清除會先動手、
+    -- 抑制永遠輪不到。
+    -- 抑制擋不住「玩家離線很久回來時的一次性追趕」（AnimalManagerMain.java:103 的 hoursAway
+    -- 無上限，整段在同一個 Java call stack 內完成，Lua 插不進去），那種爆量仍要靠清除
+    -- 門檻事後收拾——這是兩者互補而非取代的理由。
+    MaxRanchBreedingPerGroup = 0,
+    -- 全服已載入散養總量上限（0＝停用）。與 MaxAnimalsPerGroup 是**兩個獨立維度**，不是
+    -- 覆蓋關係：後者是 per-player（每位玩家 AnimalScanRadius 內的局部熱點），前者不分玩家、
+    -- 不做半徑過濾。
+    -- 為什麼需要它：per-player 分桶的動物必須先通過 nearestPlayer 過濾，離所有玩家超過
+    -- AnimalScanRadius 的動物根本不進桶——但它們仍是已載入動物，每 tick 全量更新
+    -- （server 端 MovingObjectUpdateScheduler 停用、IsoPlayer.getMinimumSimulationLevel
+    -- 硬編碼 FULL 且 IsoAnimal 未覆寫，IsoPlayer.java:3946-3949），照樣吃主執行緒。
+    -- 「已載入」就是這個上限的天然邊界，也是唯一有意義的邊界：未載入區的動物是
+    -- VirtualAnimal（沒有 pregnant/fertilized 欄位，VirtualAnimal.java:16-46），既不繁殖
+    -- 也不在 IsoCell.objectList 裡，Lua 看不到、也不需要看到。
+    MaxGlobalAnimalsPerGroup = 0,
     AnimalGroupList = "",
     AnimalLimitOverrides = "",
     AnimalZoneLimitOverrides = "",
+    -- 全域散養上限的逐群組覆寫（0＝該群組不受全域上限約束）
+    AnimalGlobalLimitOverrides = "",
+    -- 繁殖上限的逐群組覆寫（0＝該群組不做繁殖抑制）
+    RanchBreedingOverrides = "",
     AnimalScanRadius = 64,
     AnimalScanIntervalSeconds = 10,
 }
@@ -179,6 +214,29 @@ function Cleaner.parseList(value, fallback)
         end
     end
     return result
+end
+
+-- ============ 清單產生器直通沙盒的 token 工具（純函式，煙霧測試直測） ============
+
+-- token 的識別 key：覆寫類 token（group=value）取 = 前段、其餘取整個 token。
+-- Picker 的已選清單以 key 去重／upsert，讓「rat=5 改成 rat=9」是原位替換而非重複兩筆。
+-- 預載的原始 token 不經關鍵字解析（ProtectList 的關鍵字 token 無法無損反解為物品），
+-- 整值寫回時手寫 token 原樣保留——WYSIWYG 在 token 層級無損。
+function Cleaner.tokenKey(token)
+    token = tostring(token or "")
+    local key = token:match("^(.-)%s*=")
+    return key or token
+end
+
+-- 覆寫類 token 組裝：group=非負整數。格式錯誤（非數字、負數、小數、超過 1000000）
+-- 一律回 nil，由呼叫端顯示錯誤提示。不做值域 clamp：語意上限由讀取端
+-- parseGroupLimits 統一負責，這裡只擋「寫進沙盒字串會變垃圾」的格式錯誤。
+function Cleaner.buildLimitToken(group, rawValue)
+    local n = tonumber(trim(tostring(rawValue or "")))
+    if not n or n < 0 or n > 1000000 or n ~= math.floor(n) then
+        return nil
+    end
+    return group .. "=" .. string.format("%d", n)
 end
 
 -- 關鍵字清單：token 對「fullType／點號後段／英文 DisplayName／伺服器語言翻譯名」做
@@ -372,6 +430,16 @@ end
 -- 圈養上限的逐群組覆寫（0＝該群組圈養永不清理）
 function Cleaner.getAnimalZoneLimitOverrides()
     return parseGroupLimits("AnimalZoneLimitOverrides")
+end
+
+-- 全域散養上限的逐群組覆寫（0＝該群組不受全域上限約束）
+function Cleaner.getAnimalGlobalLimitOverrides()
+    return parseGroupLimits("AnimalGlobalLimitOverrides")
+end
+
+-- 繁殖上限的逐群組覆寫（0＝該群組不做繁殖抑制；同清除側的 0 語意）
+function Cleaner.getRanchBreedingOverrides()
+    return parseGroupLimits("RanchBreedingOverrides")
 end
 
 function Cleaner.sanitize(value)
@@ -677,6 +745,32 @@ function Cleaner.sortSafe(list, comp)
         width = width * 2
     end
     return list
+end
+
+-- 動物的絕對保護判定：命名／掛鉤／牽抱／持有／載具／死亡／無所在格。
+-- AnimalScanner 的散養分類與 AnimalBreeding 的農場清除共用同一份，兩邊的「保護」
+-- 才不會漂移（isWild() 不可當保護條件：動物站進圈地會自動 setWild(false)，
+-- IsoAnimal.java:611-626，惡意繁殖個體也是馴化態）
+function Cleaner.isProtectedAnimal(animal)
+    if not animal or animal:isDead() or animal:getSquare() == nil then
+        return true
+    end
+    local name = animal:getCustomName()
+    if name ~= nil and tostring(name):match("^%s*(.-)%s*$") ~= "" then
+        return true
+    end
+    if animal:isOnHook() then
+        return true
+    end
+    local data = animal:getData()
+    if data and data:getAttachedPlayer() ~= nil then
+        return true
+    end
+    -- IsoAnimal.java:2884-2886; IsoGameCharacter.java:11139-11141
+    if animal:isHeld() or animal:getVehicle() ~= nil then
+        return true
+    end
+    return false
 end
 
 function Cleaner.chebyshevDistance(x1, y1, x2, y2)

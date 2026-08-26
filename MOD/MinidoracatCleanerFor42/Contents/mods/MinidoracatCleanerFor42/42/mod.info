@@ -2,5 +2,6 @@ name=Minidoracat Cleaner for B42
 id=MinidoracatCleanerFor42
 description=[B42]所有容器皆可刪除垃圾；自動清理範圍內過量的地板重複物品與動物。By Minidoracat
 poster=poster.png
+require=MinidoracatUIFor42
 modversion=42.20.3-0.4.0
 versionMin=42.20.2

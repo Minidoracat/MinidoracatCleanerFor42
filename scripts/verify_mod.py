@@ -283,6 +283,32 @@ for m in MEDIA_DIRS:
     miss += [f"缺分頁名: Sandbox_{p}" for p in pages if f"Sandbox_{p}" not in keys]
     fail("沙盒選項翻譯配對", miss) if miss else ok(f"沙盒選項翻譯配對（{len(opts)} 選項）")
 
+# ---- 10b. DEFAULTS 鍵 ↔ sandbox-options 宣告對等 ----
+# 抓「Core 加了 DEFAULTS、程式讀 getOption，卻忘了在 sandbox-options.txt 宣告」這整類 bug：
+# getOption 讀 SandboxVars[MOD_ID][name]，未宣告的鍵恆為 nil → 永遠回退 DEFAULTS →
+# 功能在遊戲內完全不可達，而煙霧測試直接塞 sandbox 表、全綠（設計評審 codex lane 實際抓到
+# MaxRanchBreedingPerGroup 一度是死碼）。反向（宣告了卻沒有 DEFAULTS）會讓 getOption 在
+# 沙盒缺值時回 nil，呼叫端的 `or DEFAULTS.X` 兜底也拿不到值。
+for m in MEDIA_DIRS:
+    sb = os.path.join(m, "sandbox-options.txt")
+    core = os.path.join(m, "lua", "shared", "MinidoracatCleaner_Core.lua")
+    if not (os.path.isfile(sb) and os.path.isfile(core)):
+        continue
+    with open(sb, encoding="utf-8") as fh:
+        declared = set(re.findall(r"option\s+MinidoracatCleanerFor42\.(\w+)", fh.read()))
+    with open(core, encoding="utf-8") as fh:
+        core_txt = fh.read()
+    dm = re.search(r"Cleaner\.DEFAULTS\s*=\s*\{(.*?)\n\}", core_txt, re.DOTALL)
+    if not dm:
+        fail("DEFAULTS 對等宣告", ["Core.lua 找不到 Cleaner.DEFAULTS 區塊"])
+        continue
+    defaults = set(re.findall(r"^\s*(\w+)\s*=", dm.group(1), re.MULTILINE))
+    probs = [f"DEFAULTS 有、sandbox-options 未宣告（遊戲內死碼）: {k}"
+             for k in sorted(defaults - declared)]
+    probs += [f"sandbox-options 宣告、DEFAULTS 缺（缺值時 getOption 回 nil）: {k}"
+              for k in sorted(declared - defaults)]
+    fail("DEFAULTS 對等宣告", probs) if probs else ok(f"DEFAULTS 對等宣告（{len(defaults)} 鍵）")
+
 # ---- 11. CHANGELOG 洩漏掃描 ----
 LEAK_PATTERNS = [
     (re.compile(r"/home/\w+"), "Linux 家目錄路徑"),

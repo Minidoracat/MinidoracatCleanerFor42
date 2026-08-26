@@ -44,13 +44,24 @@ local function describeDetail(kind, detail)
             return script:getDisplayName()
         end
     elseif kind == "animals" then
-        -- 動物「群組」沒有原版翻譯鍵可用：vanilla 只有分性別年齡的 IGUI_AnimalType_*
-        -- （rat→公老鼠、ratfemale→母老鼠…），對應不到群組這個概念，故用本 MOD 自己的鍵。
-        -- getText 查不到時會原樣回傳 key，就 fallback 成群組原名——別的 MOD 新增的群組
-        -- 因此仍能正常顯示，不會變成空字串
+        -- 本 MOD 自己的群組鍵優先，vanilla 的 IGUI_Animal_Group_* 只當 fallback。
+        -- vanilla **確實有**這套群組鍵（原版 IG_UI.json 共 11 個群組），但不能直接拿來用：
+        -- 繁中把 rat 與 mouse 都譯成「老鼠」，而本 MOD 的 rat / mouse 是兩個各有獨立上限
+        -- 的群組——警告寫「老鼠超過上限」時玩家無法分辨是哪一群，管理員設
+        -- rat=20,mouse=50 時更對不上。自己的鍵把 mouse 譯成「家鼠」才有區辨性。
+        -- （「原版有鍵可用」不等於「該用原版鍵」：共用同一個概念的鍵在本 MOD 的用途下
+        -- 可能是有歧義的，換過去之前要先確認它在每個語系都能區分我們真正在區分的東西。）
+        -- 退到 vanilla 鍵則是純粹的擴充：涵蓋我們沒列的群組（原版的 deaddeer，或其他 MOD
+        -- 新增的物種）。getText 查不到時會原樣回傳 key，兩者都落空才回群組原名，
+        -- 不會變成空字串
         local key = "IGUI_MinidoracatCleaner_AnimalGroup_" .. tostring(detail)
         local translated = getText(key)
         if translated and translated ~= key then
+            return translated
+        end
+        local vanillaKey = "IGUI_Animal_Group_" .. tostring(detail)
+        translated = getText(vanillaKey)
+        if translated and translated ~= vanillaKey then
             return translated
         end
     end
