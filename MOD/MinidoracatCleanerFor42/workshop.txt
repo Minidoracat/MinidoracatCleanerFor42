@@ -15,6 +15,9 @@ description=[*] [b]Automatically removes[/b] overbred animals — runaway rats, 
 description=[/list]
 description=Every cleanup is [b]warned first[/b] and only executed if the area is still over the limit on the next scan, so normal players get time to tidy up themselves.
 description=
+description=[h2]⚠️ Requirement[/h2]
+description=This mod requires the author's UI library [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] (listed as a required item). It only provides UI components and adds no game content; install it on both server and clients, and place it before this mod in the server's Mods list.
+description=
 description=[h2]🧰 Features[/h2]
 description=[list]
 description=[*] [b]Delete items in every container[/b]: backpacks, cabinets, trunks, the floor… right-click to delete one item or a whole selection, with a confirmation dialog. In multiplayer the server validates and performs the deletion, so regular players need no admin rights
@@ -23,14 +26,15 @@ description=[*] [b]Automatic floor item cleanup[/b]: two independent thresholds 
 description=[*] [b]Tells litter from scenery[/b]: forest floor branches, wood and grass are not dropped by anyone, yet they are the easiest thing to mistake for dumping. This mod splits floor items into two groups by [u]whether they carry a dropper stamp[/u] and applies a separate limit to each — a generous allowance for world-generated clutter, normal control for what players drop. You can also nominate items to use the high tolerance limits yourself
 description=[*] [b]Whole piles at a time[/b]: cleanup starts from the most recently dropped piles and clears them entirely, keeping older legitimate items
 description=[*] [b]Instant reaction[/b]: dropped items enter the detection queue immediately — no waiting for the next periodic scan
-description=[*] [b]Animal population control[/b]: removes the excess when one species gets too dense. [u]Stray[/u] and [u]ranched[/u] animals are counted separately with independent limits, both overridable per species (e.g. "rat=20, chicken=80")
-description=[*] [b]Ranches are safe[/b]: ranched animals are [u]never cleaned[/u] by default; named, held/leashed and hooked animals are absolutely protected under any configuration. Set a number only if you want a ceiling on your ranch
+description=[*] [b]Three-dimensional animal control[/b]: [u]near players[/u] (counted within each player's scan radius), [u]server-wide[/u] (a distance-blind safety net for animals far from everyone yet still eating performance), and [u]per farm[/u] (counted per set of connected animal zones — the same unit the game uses to decide who can breed). Each dimension has its own limit, all overridable per species (e.g. "rat=20, chicken=80")
+description=[*] [b]Farm breeding cap (gentle mode)[/b]: removes no living animal — past the cap it ends the newest pregnancies and turns the newest fertilised eggs back into ordinary eggs, keeping whatever is closest to birth. "The farm stops growing, nothing dies"
+description=[*] [b]Ranches are safe[/b]: ranched animals are [u]never cleaned[/u] by default and animals inside hutches are never removed; named, held/leashed and hooked animals are absolutely protected under any configuration. Set a number only if you want a ceiling on your ranch
 description=[*] [b]Triple warning[/b]: a red warning above your character + a chat system message + an alert sound. The chat line stays in your log so you can scroll back to it; a green notice with the remaining count follows the cleanup
 description=[*] [b]Dropper and handler tracking[/b]: records who last dropped each item and who last moved it between containers (with a timestamp), shown right in the item tooltip — no more guessing who littered or who took it. Times are shown in [u]each player's own timezone[/u], so the server needs no timezone setting
 description=[*] [b]Cleanup log file[/b]: every warning and cleanup is written to its own log with timestamp, item/species, count, coordinates and the dropper — ready for server admin audits (path below)
-description=[*] [b]List builder[/b]: an in-game search tool — look up items and animal groups by keyword ([u]localized name or English ID both work[/u]), pick them, copy the exact values and paste them into the sandbox options. No more transcribing item IDs by hand
+description=[*] [b]List manager[/b]: opened from the right-click menu — a sidebar switches between seven lists, search by keyword ([u]localized name or English ID both work[/u]), check results and add them in bulk with a value, batch-edit or remove entries below, select-all on both lists. Admins can [b]apply straight to the sandbox[/b] (using the game's own sandbox sync channel and permission check); regular players can still copy exact values for manual setup
 description=[*] [b]Batch animal spawner[/b]: admin testing tool, right-click to spawn 10/25/50/100 of a chosen animal at once. [u]Hidden by default[/u] - enable it in the sandbox options (or launch the game with -debug)
-description=[*] [b]Sandbox options[/b]: 20 settings split across three pages (General / Items / Animals), each with an explanation; items and animals each get a [b]master on/off switch[/b] so you never have to zero out every limit by hand
+description=[*] [b]Sandbox options[/b]: 24 settings split across three pages (General / Items / Animals), each with an explanation; defaults and per-species overrides share the same naming stem so they pair up at a glance; items and animals each get a [b]master on/off switch[/b]
 description=[*] [b]Singleplayer & multiplayer[/b]: in MP every deletion and cleanup is validated and executed server-side, so modified clients can't abuse it
 description=[*] [b]Languages[/b]: English / 繁體中文 / 简体中文 / 日本語
 description=[/list]
@@ -40,7 +44,7 @@ description=Works out of the box; defaults are tuned so normal play virtually ne
 description=[list]
 description=[*] Player-dropped: 100 same-type items per chunk, 400 across each player's scan area
 description=[*] World-generated / high tolerance: 300 per chunk, 2000 across the scan area
-description=[*] 50 stray animals per group; ranched animals are [b]not cleaned[/b] (limit 0)
+description=[*] 50 stray animals per group; ranched removal and breeding are [b]not managed by default[/b] (limits 0)
 description=[*] Default cleanup species: rat, mouse, rabbit, chicken
 description=[/list]
 description=Too strict or too loose? Every value is configurable in the sandbox settings, and you can disable the automatic parts entirely and keep only manual deletion.
@@ -62,6 +66,7 @@ description=
 description=[h2]🔗 MOD series[/h2]
 description=[list]
 description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url] — image-based world map & minimap
+description=[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] — required UI library for this mod
 description=[/list]
 description=
 description=[h2]📋 MOD information[/h2]
