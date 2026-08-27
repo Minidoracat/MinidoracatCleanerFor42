@@ -78,11 +78,6 @@ Entry types (bracket-delimited fields, grep-friendly):
 [*] [url=https://discord.gg/Gur2V67]Discord community[/url]
 [/list]
 
-[h2]📺 Follow the author[/h2]
-[list]
-[*] [url=https://www.twitch.tv/minidoracat]Twitch streams[/url]
-[/list]
-
 [b]#cleaner #trash #performance #server #animals #Minidoracat[/b]
 
 Workshop ID: 3779823349

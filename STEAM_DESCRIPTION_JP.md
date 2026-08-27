@@ -78,11 +78,6 @@
 [*] [url=https://discord.gg/Gur2V67]Discord コミュニティ[/url]
 [/list]
 
-[h2]📺 作者をフォロー[/h2]
-[list]
-[*] [url=https://www.twitch.tv/minidoracat]Twitch 配信[/url]
-[/list]
-
 [b]#cleaner #trash #performance #server #animals #Minidoracat[/b]
 
 Workshop ID: 3779823349
