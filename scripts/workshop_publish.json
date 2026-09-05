@@ -11,5 +11,11 @@
         "tchinese": "STEAM_DESCRIPTION.md",
         "schinese": "STEAM_DESCRIPTION.md",
         "japanese": "STEAM_DESCRIPTION_JP.md"
+    },
+    "titles": {
+        "english": "Minidoracat Cleaner for B42",
+        "tchinese": "[B42] Minidoracat 清潔隊 Cleaner",
+        "schinese": "[B42] Minidoracat 清洁队 Cleaner",
+        "japanese": "[B42] Minidoracat クリーナー Cleaner"
     }
 }
