@@ -2,7 +2,7 @@
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
 DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua，跑四十一個情境並斷言結果。
 
-    lua scripts/smoke_scanner.lua        （在 repo 根目錄執行）
+    lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
 情境一：自動清理的 normal／high 雙桶分流（掃描 → 警告 → 下一輪確認 → 刪除）
 情境二：批次手動刪除的索引建立與安全邊界（範圍外、被牆阻隔、最愛物品都不得被刪）
@@ -401,7 +401,6 @@ local function makeContainer(owner)
         _sprite = "shelf_base",
         _overlay = "shelf_full",
         _inOverlayMap = true,     -- 底圖登記在容器 overlay 表裡＝真的是貨架
-        _overlayUpdates = 0,
         _hotSaves = 0,
         getSprite = function(self) return { getName = function() return self._sprite end } end,
         getOverlaySprite = function(self)
@@ -445,7 +444,6 @@ end
 ItemPicker = {
     updateOverlaySprite = function(obj)
         if not obj then return end
-        obj._overlayUpdates = (obj._overlayUpdates or 0) + 1
         if not obj._inOverlayMap or (obj._container and #obj._container._items == 0) then
             obj._overlay = nil
         end
@@ -518,9 +516,6 @@ local player = {
 local onlineRoster = nil
 function getOnlinePlayers() return javaList(onlineRoster or { player }) end
 function getPlayer() return player end
--- Client.lua 的 applyTouchAck 走 getSpecificPlayer(0..3) 找「名字對上的本機子玩家」
--- （分割畫面）。單一玩家的 harness 只要 index 0 回 player 即可
-function getSpecificPlayer(index) return index == 0 and player or nil end
 
 -- ===== 載入受測程式碼 =====
 local loaded = {}
@@ -4087,7 +4082,6 @@ local function makePicker(mode)
     local p = setmetatable({
         playerObj = pickerPlayer,
         mode = mode,
-        target = "",
         targetDef = nil,
         applyAllowed = false,
         selectedValues = {},
