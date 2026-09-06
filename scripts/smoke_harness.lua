@@ -68,8 +68,11 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua，跑
 情境三十六：recount 邊界——原候選走出原玩家半徑後不再計入舊 bucket；單一 plan
             超過 visit budget 時 fail-closed 不刪並寫 animal_recount_unprovable；
             stray／zone 兩份 plan 各有 NaN 時 animal_nan 的 skipped 要加總
-情境三十七：Tooltip client 消費端真的讀新章——有章物品走自訂 render、無章物品退回原 render，
-            小時章會進 Calendar/SimpleDateFormat 格式化路徑
+情境三十七：Tooltip client 消費端真的讀新章——無章物品退回原 render；有章物品**先讓下游 render
+            畫完**（不再整個重畫 vanilla，SRJ 等在 render 加料的 MOD 不會被吃掉），量下游在
+            self 上畫的矩形最底，把章貼在其下（下游畫在框外的第二框也算）；本幀沒收到矩形不畫
+            孤立框；螢幕底放不下改貼上方、上方也不夠就省略；recorder 用完必還原（含下游拋錯、
+            實例原本就有 own drawRect 的情況）；小時章會進 Calendar/SimpleDateFormat 格式化路徑
 情境三十八：全域散養上限——離所有玩家超過 AnimalScanRadius 的已載入動物在 per-player
             分桶裡根本不存在，只有全域桶看得到；全域上限只管散養（圈養是玩家資產）、
             不對任何玩家發通知；兩個維度同時超標時同一隻不得被兩個 job 各刪一次
@@ -3424,18 +3427,127 @@ ISToolTipInv.render({ item = makeItem("Base.NoTrace") })
 check(TOOLTIP_ORIGINAL_CALLS == 1,
     "無章物品退回 vanilla render")
 
+-- UI stub：drawRect／drawRectBorder／drawText 記進 DRAW_LOG；MAKE_TIP 給完整實例（metatable 指回
+-- class，與 ISUIElement.lua:1965-1968 同款）；下游 DOWNSTREAM_RENDER 畫 vanilla 框 0..40，再模仿
+-- SRJ 在框外貼第二框 39..99（SRJ Tooltip.lua:260-270 不回寫高度）
+DRAW_LOG = {}
+ISToolTipInv.drawRect = function(self, x, y, w, h) DRAW_LOG[#DRAW_LOG + 1] = { "rect", x, y, w, h } end
+ISToolTipInv.drawRectBorder = function(self, x, y, w, h) DRAW_LOG[#DRAW_LOG + 1] = { "border", x, y, w, h } end
+ISToolTipInv.drawText = function(self, str, x, y) DRAW_LOG[#DRAW_LOG + 1] = { "text", x, y, str } end
+DOWNSTREAM_RENDER = function(self)
+    TOOLTIP_ORIGINAL_CALLS = TOOLTIP_ORIGINAL_CALLS + 1
+    self:drawRect(0, 0, 120, 40, 1, 0, 0, 0)
+    self:drawRectBorder(0, 0, 120, 40, 1, 1, 1, 1)
+    self:drawRect(3, 39, 130, 60, 1, 0, 0, 0)
+end
+getTextManager = function()
+    return {
+        getFontHeight = function(_, _) return 16 end,
+        MeasureStringX = function(_, _, s) return #s * 4 end,
+    }
+end
+SCREEN_H = 1080
+getCore = function() return { getScreenHeight = function() return SCREEN_H end } end
+function MAKE_TIP(y)
+    return setmetatable({
+        item = ACK_ITEM, x = 100, y = y or 100, width = 130,
+        tooltip = { getFont = function() return "Small" end },
+        backgroundColor = { r = 0, g = 0, b = 0, a = 0.6 },
+        borderColor = { r = 1, g = 1, b = 1, a = 1 },
+    }, { __index = ISToolTipInv })
+end
+-- 換下游：hook 內以 upvalue 持有 original，改 stub 的 render 欄位不會影響它，
+-- 所以要重裝 hook。清旗標＋重跑 OnCreatePlayer 即是實機的安裝路徑。
+function REINSTALL_HOOK(render)
+    ISToolTipInv.render = render
+    MinidoracatCleaner._tooltipHookInstalled = nil
+    for _, fn in ipairs(CREATE_PLAYER_HANDLERS) do
+        fn()
+    end
+end
+function OWN_RECTS()
+    local rects = {}
+    for _, entry in ipairs(DRAW_LOG) do
+        if entry[1] == "rect" then rects[#rects + 1] = entry end
+    end
+    return rects
+end
+
 -- ACK_ITEM 來自情境三十五，已由 client touchAck 寫入新格式小時章。
--- 有章時 getTraceLines 非 nil，且 visibleCheck=true 讓 hook 不進完整 UI layout；
--- 若 Tooltip 還在讀舊 key，會誤判無章而呼叫 original。
+-- 有章時的新契約：先呼叫 original（下游先畫），再看下游畫了什麼。此時的 stub render 不畫
+-- 任何矩形（等同 context menu 開著時 vanilla ISToolTipInv.lua:45 整段跳過）⇒ 不得追加孤立框。
+-- 若 Tooltip 還在讀舊 key，會誤判無章而走不到 recorder 路徑。
+DRAW_LOG = {}
 TOOLTIP_ORIGINAL_CALLS = 0
 FORMAT_CALLS = 0
 CALENDAR_MS = nil
-ISToolTipInv.render({ item = ACK_ITEM })
-check(TOOLTIP_ORIGINAL_CALLS == 0,
-    "有新章的物品走自訂 Tooltip 路徑（不是退回 vanilla）")
+ISToolTipInv.render(MAKE_TIP())
+check(TOOLTIP_ORIGINAL_CALLS == 1 and #OWN_RECTS() == 0,
+    "有新章的物品也先讓下游 render 畫（舊版整個重畫 vanilla 會吃掉 SRJ 的技能列）；"
+        .. "下游本幀沒畫任何矩形就不追加孤立框（實際 rects=" .. #OWN_RECTS() .. "）")
 check(FORMAT_CALLS == 1 and CALENDAR_MS == STAMP_HOUR * 1000,
     "小時章進 Calendar/SimpleDateFormat 格式化（實際 calls=" .. FORMAT_CALLS
         .. " ms=" .. tostring(CALENDAR_MS) .. "）")
+
+-- 疊加：換成會畫東西的下游。本 MOD 的框必須從 98（99-1）開始、x=0、寬≥self.width。
+REINSTALL_HOOK(DOWNSTREAM_RENDER)
+TOOLTIP_ORIGINAL_CALLS = 0
+TIP = MAKE_TIP()
+ISToolTipInv.render(TIP)
+RECTS = OWN_RECTS()
+check(TOOLTIP_ORIGINAL_CALLS == 1 and #RECTS == 3,
+    "下游先畫完（vanilla 框＋框外第二框），本 MOD 再補一個框（實際 rects=" .. #RECTS .. "）")
+check(RECTS[3] and RECTS[3][3] == 98 and RECTS[3][2] == 0 and RECTS[3][4] >= 130,
+    "本 MOD 的框貼在下游最底（y=99-1）、x=0、寬不小於 self.width（實際 y="
+        .. tostring(RECTS[3] and RECTS[3][3]) .. " x=" .. tostring(RECTS[3] and RECTS[3][2]) .. "）")
+check(rawget(TIP, "drawRect") == nil and rawget(TIP, "drawRectBorder") == nil,
+    "recorder 用完即從實例移除（rawget own slot 為 nil）")
+TEXT_COUNT = 0
+for _, entry in ipairs(DRAW_LOG) do
+    if entry[1] == "text" and entry[3] >= 98 then TEXT_COUNT = TEXT_COUNT + 1 end
+end
+check(TEXT_COUNT == 1, "一行章畫成一行字、落在本 MOD 的框內（實際 " .. TEXT_COUNT .. "）")
+
+-- 實例原本就有 own drawRect（別的 MOD 放的）：用完要還原成那個，不是砍成 nil
+DRAW_LOG = {}
+TIP2 = MAKE_TIP()
+FOREIGN_CALLS = 0
+FOREIGN = function(self, ...) FOREIGN_CALLS = FOREIGN_CALLS + 1; return ISToolTipInv.drawRect(self, ...) end
+rawset(TIP2, "drawRect", FOREIGN)
+ISToolTipInv.render(TIP2)
+check(rawget(TIP2, "drawRect") == FOREIGN and FOREIGN_CALLS >= 2,
+    "實例原有的 own drawRect 在下游期間仍被轉呼叫、用完原樣還原（實際 calls=" .. FOREIGN_CALLS .. "）")
+
+-- 下游拋錯：錯誤要傳出去（不吞），recorder 仍要還原
+DRAW_LOG = {}
+REINSTALL_HOOK(function(self) self:drawRect(0, 0, 120, 40, 1, 0, 0, 0); error("downstream boom") end)
+TIP3 = MAKE_TIP()
+OK_RENDER, ERR_RENDER = pcall(ISToolTipInv.render, TIP3)
+check(not OK_RENDER and tostring(ERR_RENDER):find("downstream boom", 1, true) ~= nil
+    and rawget(TIP3, "drawRect") == nil and rawget(TIP3, "drawRectBorder") == nil,
+    "下游拋錯：錯誤原樣傳出、recorder 仍還原（ok=" .. tostring(OK_RENDER) .. "）")
+
+-- tooltip 被 vanilla clamp 到 y=0（ISToolTipInv.lua:80 math.max(0,…)）仍要畫：
+-- 「x>1 and y>1 才畫」那種第一 frame 守衛會在這裡整段跳過
+REINSTALL_HOOK(DOWNSTREAM_RENDER)
+DRAW_LOG = {}
+ISToolTipInv.render(MAKE_TIP(0))
+check(#OWN_RECTS() == 3, "tooltip 貼在螢幕頂（y=0）時本 MOD 的框照畫（實際 rects=" .. #OWN_RECTS() .. "）")
+
+-- 螢幕底放不下 ⇒ 貼上方（y 為負）；上方也不夠 ⇒ 省略
+REINSTALL_HOOK(DOWNSTREAM_RENDER)
+DRAW_LOG = {}
+SCREEN_H = 100 + 99 + 10 -- self.y=100，下游底 99，本 MOD 框高 26 放不下
+ISToolTipInv.render(MAKE_TIP())
+RECTS = OWN_RECTS()
+check(#RECTS == 3 and RECTS[3][3] < 0,
+    "螢幕底放不下時改貼上方（實際 y=" .. tostring(RECTS[3] and RECTS[3][3]) .. "）")
+DRAW_LOG = {}
+SCREEN_H = 10 + 99 + 10 -- self.y=10：下方 10+98+26 超出、上方 10-26 也不夠
+ISToolTipInv.render(MAKE_TIP(10))
+RECTS = OWN_RECTS()
+check(#RECTS == 2, "上下都放不下時省略本 MOD 的框，不畫半截（實際 rects=" .. #RECTS .. "）")
+SCREEN_H = 1080
 end
 print()
 print("情境三十八：全域散養上限（跨玩家半徑的兜底維度）")

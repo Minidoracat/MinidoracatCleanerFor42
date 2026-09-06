@@ -75,25 +75,94 @@ local function getTraceLines(item)
     return lines
 end
 
-local function appendTraceBlock(tooltip, lines)
-    local padLeft = tooltip.padLeft or 5
-    local padBottom = tooltip.padBottom or 5
-    local currentHeight = tooltip:getHeight()
-    -- ObjectTooltip.java:252-267,307-318,328-367,411-427
-    local layout = tooltip:beginLayout()
-    for _, line in ipairs(lines) do
-        local layoutItem = layout:addItem()
-        layoutItem:setLabel(line[1] .. ":", 1, 1, 1, 1)
-        layoutItem:setValue(line[2], 0.8, 0.8, 0.8, 1)
+-- 疊法：本 MOD 在事件內安裝 hook，恆為最外層（OnGameStart 晚於所有 MOD 的 top-level）。
+-- 舊版有章時整個重畫 vanilla、不呼叫下游，於是任何在 ISToolTipInv:render 加料的 MOD 都被吃掉
+-- ——Skill Recovery Journal 的日記一經容器轉移就「變空白」（2026-09-06 Sixya 案）。
+-- 現在改成：先讓下游（vanilla／SRJ／其他 override）畫完，量它實際畫到哪，再把章貼在最底下。
+--
+-- 為什麼要「量」：SRJ 把技能列畫在 tooltip 框外、不回寫任何高度（SRJ Tooltip.lua:260-270），
+-- self:getHeight() 量不到它。攔 self **實例**上的 drawRect/drawRectBorder 記 max(y+h) 是唯一不認
+-- MOD 的量法（ISUIElement 走標準 metatable，ISUIElement.lua:1965-1968，實例欄位優先於 class 方法）。
+-- 攔不到的：下游直接呼叫 self.javaObject:DrawTextureScaledColor——沒有已知 MOD 這樣做；
+-- ObjectTooltip 自己的 Java 繪圖高度已含在 self:getHeight()（ISToolTipInv.lua:97）。
+local PAD = 5
+
+-- rawget 在 own key 不存在時會查 metatable（KahluaTableImpl.java:98），辨識不了「實例自己
+-- 有沒有這個欄位」；只能走 pairs（iterator 只走 own keys，:152-180）。否則還原用 nil 會把
+-- 別的 MOD 放在實例上的覆寫砍掉。
+local function ownSlots(self)
+    local rect, border
+    for k, v in pairs(self) do
+        if k == "drawRect" then
+            rect = v
+        elseif k == "drawRectBorder" then
+            border = v
+        end
     end
-    local endY = layout:render(padLeft, currentHeight - padBottom, tooltip)
-    tooltip:endLayout(layout)
-    tooltip:setHeight(endY + padBottom)
+    return rect, border
 end
 
-local function renderItemTooltip(tooltip, item, lines)
-    item:DoTooltip(tooltip)
-    appendTraceBlock(tooltip, lines)
+-- 回傳下游本 frame 畫到的最底 y（相對 self）；本 frame 沒收到任何矩形回 nil
+local function renderDownstreamMeasured(self, originalRender)
+    local ownRect, ownBorder = ownSlots(self)
+    local fwdRect, fwdBorder = self.drawRect, self.drawRectBorder -- 安裝前的有效方法（含別人的覆寫）
+    local bottom
+    local function track(y, w, h)
+        if w > 0 and h > 0 and (not bottom or y + h > bottom) then
+            bottom = y + h
+        end
+    end
+    rawset(self, "drawRect", function(ui, x, y, w, h, a, r, g, b)
+        track(y, w, h)
+        return fwdRect(ui, x, y, w, h, a, r, g, b)
+    end)
+    rawset(self, "drawRectBorder", function(ui, x, y, w, h, a, r, g, b)
+        track(y, w, h)
+        return fwdBorder(ui, x, y, w, h, a, r, g, b)
+    end)
+    local ok, err, trace = pcall(originalRender, self)
+    rawset(self, "drawRect", ownRect) -- 沒 own slot 時 ownRect 為 nil ⇒ 刪掉 recorder
+    rawset(self, "drawRectBorder", ownBorder)
+    if not ok then
+        -- Kahlua 的 error(msg, stacktrace)：第二參數是 stacktrace，不是 Lua 的 level
+        -- （BaseLib.java:250-256；pcall 回 ok, msg, trace, throwable，KahluaThread.java:1457-1463）
+        error(err, trace)
+    end
+    -- 沒收到矩形＝下游整段沒畫（context menu 開著時 vanilla ISToolTipInv.lua:45 直接跳過）；
+    -- 不能拿殘留的 self:getHeight() 畫一個孤立框
+    return bottom
+end
+
+-- 框寬用 self.width：vanilla 與 SRJ 都把自己最寬的框設成 self.width（ISToolTipInv.lua:96；
+-- SRJ Tooltip.lua:162,258,268 的 hardSetWidth），不必追蹤下游畫了什麼矩形
+local function appendTraceBox(self, lines, bottom)
+    local tm = getTextManager()
+    local font = self.tooltip:getFont() -- ObjectTooltip.java:67
+    local lineH = tm:getFontHeight(font)
+    local h = PAD * 2 + lineH * #lines
+    local w = self.width
+    local texts = {}
+    for i, line in ipairs(lines) do
+        texts[i] = line[1] .. ": " .. line[2]
+        w = math.max(w, PAD * 2 + tm:MeasureStringX(font, texts[i]))
+    end
+    -- 貼底框不參與 vanilla 的螢幕 clamp（ISToolTipInv.lua:76-81）：背包在右下時 vanilla 框已被推到
+    -- 貼底，往下貼必被裁 ⇒ 改貼上方；上方也不夠就省略。這是相對舊版唯一的退步（舊版章在框內）。
+    -- ponytail: 上方框沒做「與游標避讓矩形／context menu currentOptionRect 交集」檢查，會壓到游標旁
+    -- 的格子；有人抱怨再加（vanilla :99-101、:87-92 的兩個矩形都拿得到）。
+    local y = bottom - 1
+    if self.y + y + h > getCore():getScreenHeight() then
+        if self.y - h < 0 then
+            return
+        end
+        y = -h + 1
+    end
+    local bg, bd = self.backgroundColor, self.borderColor
+    self:drawRect(0, y, w, h, math.min(1, bg.a + 0.4), bg.r, bg.g, bg.b)
+    self:drawRectBorder(0, y, w, h, bd.a, bd.r, bd.g, bd.b)
+    for i, text in ipairs(texts) do
+        self:drawText(text, PAD, y + PAD + (i - 1) * lineH, 0.8, 0.8, 0.8, 1, font)
+    end
 end
 
 local function installTooltipHook()
@@ -101,76 +170,18 @@ local function installTooltipHook()
         return
     end
     Cleaner._tooltipHookInstalled = true
-    local originalRender = ISToolTipInv.render
+    local originalRender = ISToolTipInv.render -- OnGameStart 時已是 SRJ（或任何 top-level 包過者）
 
     function ISToolTipInv:render()
         local lines = getTraceLines(self.item)
         if not lines then
             return originalRender(self)
         end
-
-        -- Vanilla 42.20.2 ISToolTipInv.lua:35-105, with append after both DoTooltip passes.
-        if not ISContextMenu.instance or not ISContextMenu.instance.visibleCheck then
-            local mx = getMouseX() + 24
-            local my = getMouseY() + 24
-            if not self.followMouse then
-                mx = self:getX()
-                my = self:getY()
-                if self.anchorBottomLeft then
-                    mx = self.anchorBottomLeft.x
-                    my = self.anchorBottomLeft.y
-                end
-            end
-
-            local PADX = 0
-            self.tooltip:setX(mx + PADX)
-            self.tooltip:setY(my)
-            self.tooltip:setWidth(50)
-            self.tooltip:setMeasureOnly(true)
-            renderItemTooltip(self.tooltip, self.item, lines)
-            self.tooltip:setMeasureOnly(false)
-
-            local myCore = getCore()
-            local maxX = myCore:getScreenWidth()
-            local maxY = myCore:getScreenHeight()
-            local tw = self.tooltip:getWidth()
-            local th = self.tooltip:getHeight()
-
-            self.tooltip:setX(math.max(0, math.min(mx + PADX, maxX - tw - 1)))
-            if not self.followMouse and self.anchorBottomLeft then
-                self.tooltip:setY(math.max(0, math.min(my - th, maxY - th - 1)))
-            else
-                self.tooltip:setY(math.max(0, math.min(my, maxY - th - 1)))
-            end
-
-            if self.contextMenu and self.contextMenu.joyfocus then
-                local playerNum = self.contextMenu.player
-                self.tooltip:setX(getPlayerScreenLeft(playerNum) + 60)
-                self.tooltip:setY(getPlayerScreenTop(playerNum) + 60)
-            elseif self.contextMenu and self.contextMenu.currentOptionRect then
-                if self.contextMenu.currentOptionRect.height > 32 then
-                    self:setY(my + self.contextMenu.currentOptionRect.height)
-                end
-                self:adjustPositionToAvoidOverlap(self.contextMenu.currentOptionRect)
-            end
-
-            self:setX(self.tooltip:getX() - PADX)
-            self:setY(self.tooltip:getY())
-            self:setWidth(tw + PADX)
-            self:setHeight(th)
-
-            if self.followMouse and self.contextMenu == nil then
-                self:adjustPositionToAvoidOverlap({
-                    x = mx - 24 * 2,
-                    y = my - 24 * 2,
-                    width = 24 * 2,
-                    height = 24 * 2,
-                })
-            end
-
-            self:drawRect(0, 0, self.width, self.height, self.backgroundColor.a, self.backgroundColor.r, self.backgroundColor.g, self.backgroundColor.b)
-            self:drawRectBorder(0, 0, self.width, self.height, self.borderColor.a, self.borderColor.r, self.borderColor.g, self.borderColor.b)
-            renderItemTooltip(self.tooltip, self.item, lines)
+        -- bottom 非 nil＝下游本 frame 真的畫了（也就已定位）；不另抄 SRJ:263 的 x>1/y>1 守衛，
+        -- 那會讓 tooltip 被 clamp 到 y=0（vanilla :80）時整段不畫
+        local bottom = renderDownstreamMeasured(self, originalRender)
+        if bottom then
+            appendTraceBox(self, lines, bottom)
         end
     end
 end
