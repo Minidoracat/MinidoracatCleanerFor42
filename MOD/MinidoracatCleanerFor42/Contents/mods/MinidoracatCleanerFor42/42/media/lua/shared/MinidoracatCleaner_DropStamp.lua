@@ -1,12 +1,12 @@
 require "MinidoracatCleaner_Core"
-require "TimedActions/ISDropWorldItemAction"
-require "TimedActions/ISDropVehicleItemAction"
-require "TimedActions/ISTransferAction"
-require "TimedActions/ISGrabItemAction"
 
 if isClient() then
     return
 end
+
+require "TimedActions/ISDropWorldItemAction"
+require "TimedActions/ISDropVehicleItemAction"
+require "TimedActions/ISTransferAction"
 
 local Cleaner = MinidoracatCleaner
 
@@ -101,12 +101,10 @@ local function installDropHooks()
         return result
     end
 
-    -- 撿地板有獨立實作（ISGrabItemAction.lua:121-137 直接 AddItem，不經 ISTransferAction），
-    -- 單機需在此蓋章。**必須 nil-guard**：ISGrabItemAction 是 client-only 檔，dedicated server
-    -- 對 client 目錄只算 checksum 不執行（GameServer.java:1450-1452），require 找不到靜默回 nil
-    -- ——不 guard 的話這裡 deref nil 會讓整個 install callback 中斷，連下面的
-    -- OnProcessTransaction 註冊都到不了（本檔其他三個 hook 目標都在 shared/，才一直沒事）。
-    -- dedicated 的撿取本來就由 Client.lua 回報，跳過無缺口
+    -- 撿取有獨立實作；SP 的 client Lua 在 OnGameStart 前已載入，不需在 shared 階段 require
+    -- （LuaManager.java:1243-1246；此時 client 搜尋路徑尚未加入，require 會警告失敗）。
+    -- dedicated 只對 client 算 checksum、不執行（GameServer.java:1454-1456），必須保留
+    -- nil-guard，讓其餘 hook 與 OnProcessTransaction 照常註冊；MP 撿取由 Client.lua 回報。
     if ISGrabItemAction then
         local originalGrabTransfer = ISGrabItemAction.transferItem
         function ISGrabItemAction:transferItem(worldItem)
