@@ -57,6 +57,7 @@
 [/list]
 
 [h2]☕ 作者を応援[/h2]
+役に立ったら、このページに 👍 と GitHub に ⭐ をお願いします。より多くのプレイヤーに届きやすくなります。
 MOD は永久に無料、ソースは GitHub で公開しています。気に入ったらコーヒー 1 杯分の支援を。サーバー運営と MOD 開発に使います。
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url] [url=https://github.com/Minidoracat/MinidoracatCleanerFor42][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_github.png[/img][/url]
 
