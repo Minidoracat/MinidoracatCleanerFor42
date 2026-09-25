@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua，跑四十一個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十三個情境並斷言結果。
 
     lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
@@ -93,6 +93,10 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua，跑
             upsert 原位替換、整值寫回）、權限 gate 鏡射封包層 Capability 守門、
             getOptionByName 先擋未宣告選項（set 對未知名拋 Java 例外）、SP 不送封包、
             MP 走 copy→sendToServer 的 vanilla 封包鏈
+情境四十二：家具搬移與建造的稽核紀錄與放置者查詢——撿／放要分得出來且帶物件名、建造只記
+            真的蓋出來的、轉向不改放置者、查詢限半徑、client 只顯示仍存在的物件
+情境四十三：物品放進工作站前清章——offerItem 當下新舊章都已清除（vanilla 隨即 sync 並在製作期間
+            每秒全服廣播）、不動其他 modData、原回傳值照傳
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -181,6 +185,8 @@ local tickHandlers, clientCommandHandlers, worldMenuHandlers = {}, {}, {}
 GAME_START_HANDLERS, TRANSACTION_HANDLERS, SERVER_COMMAND_HANDLERS, CREATE_PLAYER_HANDLERS = {}, {}, {}, {}
 -- EveryTenMinutes 供 AnimalBreeding 的抑制 arming 用（GameTime.java:636-650 的遊戲分鐘事件）
 TEN_MINUTE_HANDLERS = {}
+-- OnServerStarted 供 WorldAudit 的 hook 安裝用
+SERVER_STARTED_HANDLERS = {}
 Events = setmetatable({}, {
     __index = function(_, name)
         return {
@@ -192,7 +198,8 @@ Events = setmetatable({}, {
                 elseif name == "OnProcessTransaction" then TRANSACTION_HANDLERS[#TRANSACTION_HANDLERS + 1] = fn
                 elseif name == "OnServerCommand" then SERVER_COMMAND_HANDLERS[#SERVER_COMMAND_HANDLERS + 1] = fn
                 elseif name == "OnCreatePlayer" then CREATE_PLAYER_HANDLERS[#CREATE_PLAYER_HANDLERS + 1] = fn
-                elseif name == "EveryTenMinutes" then TEN_MINUTE_HANDLERS[#TEN_MINUTE_HANDLERS + 1] = fn end
+                elseif name == "EveryTenMinutes" then TEN_MINUTE_HANDLERS[#TEN_MINUTE_HANDLERS + 1] = fn
+                elseif name == "OnServerStarted" then SERVER_STARTED_HANDLERS[#SERVER_STARTED_HANDLERS + 1] = fn end
             end,
         }
     end,
@@ -657,6 +664,12 @@ end
 ISDropWorldItemAction = { complete = function() return true end }
 ISDropVehicleItemAction = { complete = function() return true end }
 ISTransferAction = { transferItem = function() return nil end }
+-- 記下 offerItem 當下的 modData 快照：釘住「清章必須發生在放進工作站之前」（之後 vanilla 就立刻 sync）
+ISItemSlotAddAction = { complete = function(self)
+    SLOT_ADD_SEEN = {}
+    for k, v in pairs(self.item:getModData()) do SLOT_ADD_SEEN[k] = v end
+    return "original-result"
+end }
 
 ANIMAL_REMOVED = {}
 -- opts：id / atype / x / y / wild / baby / hutch / dzone / named
@@ -4378,6 +4391,133 @@ SandboxOptions = realSandboxOptions41
 Capability = realCapability41
 sandbox.AnimalLimitOverrides = nil
 sandbox.ProtectList = nil
+end
+
+print("情境四十二：家具搬移與建造的稽核紀錄與放置者查詢")
+do
+local realGetCell42, realGetPlayer42, realGetText42 = getCell, getPlayer, getText
+-- 世界格子：key → 目前在格上的 sprite 名清單（建造成功會加進去，client 過濾靠它）
+local world42 = {}
+local function cellKey42(x, y, z) return math.floor(x) .. "," .. math.floor(y) .. "," .. math.floor(z) end
+getCell = function()
+    return { getGridSquare = function(_, x, y, z)
+        local list = world42[cellKey42(x, y, z)] or {}
+        return {
+            getObjects = function() return {
+                size = function() return #list end,
+                get = function(_, i)
+                    local name = list[i + 1]
+                    return { getSprite = function() return { getName = function() return name end } end,
+                             isFloor = function() return false end }
+                end,
+            } end,
+        }
+    end }
+end
+local globalModData42 = {}
+ModData = { getOrCreate = function(tag)
+    globalModData42[tag] = globalModData42[tag] or {}
+    return globalModData42[tag]
+end }
+ISMoveablesAction = { complete = function() return true end }
+ISBuildIsoEntity = { create = function(self, x, y, z, _, sprite)
+    if self.succeeds then
+        local key = cellKey42(x, y, z)
+        world42[key] = world42[key] or {}
+        world42[key][#world42[key] + 1] = sprite
+    end
+end }
+require "MinidoracatCleaner_WorldAudit"
+for _, fn in ipairs(SERVER_STARTED_HANDLERS) do fn() end
+
+local actor42 = { getUsername = function() return "Qoo" end }
+local other42 = { getUsername = function() return "Lengo" end }
+local square42 = { getX = function() return 101 end, getY = function() return 100 end, getZ = function() return 0 end }
+local function moveable42(actor, mode, sprite, extra)
+    local action = { character = actor, square = square42, mode = mode, moveProps = { spriteName = sprite } }
+    for k, v in pairs(extra or {}) do action[k] = v end
+    return ISMoveablesAction.complete(action)
+end
+-- 回傳 server 回給查詢者的 entries；沒有回覆回 nil
+local function query42(x, y)
+    local before = #sentCommands
+    for _, fn in ipairs(clientCommandHandlers) do
+        fn("MinidoracatCleaner", "placedQuery", player, { x = x, y = y, z = 0 })
+    end
+    nowMs = nowMs + 1000
+    local sent = sentCommands[#sentCommands]
+    if #sentCommands == before or sent.command ~= "placedInfo" or sent.player ~= player then return nil end
+    return sent.args.entries
+end
+local function count42(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+local stamp42 = "Qoo," .. STAMP_HOUR
+
+local base42 = #logLines
+moveable42(actor42, "place", "construction_01_8",
+    { item = { getFullType = function() return "Base.Mov_RoadBarrier" end } })
+check(logLines[base42 + 1] == "[moveable][Qoo][101,100,0][mode=place sprite=construction_01_8 item=Base.Mov_RoadBarrier]",
+    "放置：log 記模式、sprite 與物品")
+local entries42 = query42(101, 100)
+check(entries42 and entries42.construction_01_8 == stamp42, "放置：查詢回放置者與小時時間")
+
+moveable42(other42, "pickup", "street_decoration_01_26")
+check(logLines[base42 + 2] == "[moveable][Lengo][101,100,0][mode=pickup sprite=street_decoration_01_26]",
+    "撿起：log 與放置分得出來")
+check(query42(101, 100).construction_01_8 == stamp42, "撿走別的東西不影響同格其他家具的放置者")
+
+moveable42(other42, "rotate", "construction_01_9", { origMoveProps = { spriteName = "construction_01_8" } })
+entries42 = query42(101, 100)
+check(entries42.construction_01_9 == stamp42 and entries42.construction_01_8 == nil,
+    "轉向：紀錄搬到新 sprite，放置者仍是原放置者而非轉向者")
+
+moveable42(other42, "pickup", "construction_01_9")
+check(count42(query42(101, 100)) == 0, "撿起後該筆清除")
+
+check(query42(101 + 9, 100) == nil, "超出查詢半徑不回覆")
+
+local result42 = moveable42(actor42, "place", "x", { item = {} })
+check(result42 == true and #logLines == base42 + 4, "紀錄欄位缺漏時原動作照常回傳、不寫半截紀錄")
+
+ISBuildIsoEntity.create({ character = actor42, succeeds = true,
+    craftRecipe = { getName = function() return "WoodenFence" end } }, 101, 101, 0, false, "carpentry_02_51")
+check(logLines[base42 + 5] == "[build][Qoo][101,101,0][sprite=carpentry_02_51 recipe=WoodenFence]",
+    "建造成功：log 記玩家、座標、sprite 與配方")
+check(query42(101, 101).carpentry_02_51 == stamp42, "建造成功：可查到建造者")
+ISBuildIsoEntity.create({ character = other42, succeeds = false }, 101, 102, 0, false, "carpentry_02_51")
+check(#logLines == base42 + 5 and count42(query42(101, 102)) == 0, "建造失敗（沒蓋出東西）不記也不進放置表")
+
+-- client 顯示：只列該格還在的 sprite（被打壞／燒掉的殘留項不顯示）
+local halo42 = {}
+getPlayer = function() return { setHaloNote = function(_, text) halo42[#halo42 + 1] = text end } end
+getText = function(key, ...) return key .. ":" .. table.concat({ ... }, "|") end
+require "MinidoracatCleaner_ContextMenu"
+MinidoracatCleaner.showPlacedInfo({ x = 101, y = 101, z = 0,
+    entries = { carpentry_02_51 = stamp42, construction_01_8 = "Ghost," .. STAMP_HOUR } })
+check(halo42[1] and halo42[1]:find("IGUI_MinidoracatCleaner_PlacedBy:Qoo|", 1, true)
+    and not halo42[1]:find("Ghost", 1, true), "client：顯示仍存在物件的放置者、略過已消失的")
+MinidoracatCleaner.showPlacedInfo({ x = 101, y = 101, z = 0, entries = { construction_01_8 = "Ghost," .. STAMP_HOUR } })
+check(halo42[2] and halo42[2]:find("IGUI_MinidoracatCleaner_PlacedNone", 1, true), "client：全部已消失時顯示沒有紀錄")
+
+getCell, getPlayer, getText = realGetCell42, realGetPlayer42, realGetText42
+end
+
+print("情境四十三：物品放進工作站前清章（vanilla 製作中每秒全服廣播輸入物品）")
+do
+local item43 = makeItem("Base.GrassTuft", "Qoo")
+local md43 = item43:getModData()
+md43.MIC42_t = "Qoo," .. STAMP_HOUR
+md43.MIC42_lastMovedBy = "Old"
+md43.MIC42_lastMovedAt = 1
+md43.MIC42_lastDroppedBy = "Old"
+md43.vanillaKey = 7
+local result43 = ISItemSlotAddAction.complete({ item = item43 })
+local leftover43 = false
+for k in pairs(SLOT_ADD_SEEN or {}) do
+    if k:find("MIC42_", 1, true) then leftover43 = true end
+end
+check(SLOT_ADD_SEEN and not leftover43, "放進工作站當下新舊章都已清除")
+check(SLOT_ADD_SEEN and SLOT_ADD_SEEN.vanillaKey == 7, "非本 MOD 的 modData 不受影響")
+check(result43 == "original-result", "原動作的回傳值原樣傳回")
 end
 if failures > 0 then
     print(failures .. " 項失敗")

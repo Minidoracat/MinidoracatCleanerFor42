@@ -42,6 +42,8 @@ local function formatMovedAt(at)
     end
     return timeCacheText
 end
+-- 家具放置紀錄（ContextMenu.lua showPlacedInfo）共用同一套時間格式
+Cleaner.formatStampTime = formatMovedAt
 
 local function getTraceLines(item)
     -- self.item 不保證是 InventoryItem：ISToolTipInv 不只用於物品欄，原版另有兩處把別的

@@ -169,13 +169,29 @@ local function touchItems(playerObj, args)
     end
 end
 
+-- 家具放置者查詢（放置表見 WorldAudit.lua）。只回給查詢者本人；限 UI_REFRESH_RADIUS 內的格子，
+-- 不讓人站在原地逐格掃全圖、蒐集誰在哪裡放了什麼
+local function placedQuery(playerObj, args)
+    if type(args) ~= "table" or not Cleaner.readPlaced then
+        return
+    end
+    local x, y, z = tonumber(args.x), tonumber(args.y), tonumber(args.z)
+    if not x or not y or not z
+        or Cleaner.chebyshevDistance(playerObj:getX(), playerObj:getY(), x, y) > Cleaner.CONSTANTS.UI_REFRESH_RADIUS then
+        return
+    end
+    x, y, z = math.floor(x), math.floor(y), math.floor(z)
+    sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, "placedInfo",
+        { x = x, y = y, z = z, entries = Cleaner.readPlaced(x, y, z) or {} })
+end
+
 -- 認得的 command 才進節流表：節流 key 含 command 字串，若未知 command 也先寫入，
 -- 任意偽造字串可讓 lastCommandAt 無界成長（記憶體 DoS）；table lookup 對非字串
 -- command 也安全（字串串接則會拋例外）
-local HANDLERS = { deleteItems = deleteItems, touch = touchItems }
+local HANDLERS = { deleteItems = deleteItems, touch = touchItems, placedQuery = placedQuery }
 -- 各 command 的最小間隔（ms）。touch 放寬到 1000：client 端以 ≥1.1 秒間隔聚合送出
 -- （Client.lua flushTouch），正常玩家不會撞到；偽造洪水觸發周遭掃描的速率則被砍到 1/s
-local MIN_INTERVAL = { deleteItems = 250, touch = 1000 }
+local MIN_INTERVAL = { deleteItems = 250, touch = 1000, placedQuery = 500 }
 
 local function onClientCommand(module, command, playerObj, args)
     if module ~= Cleaner.COMMAND_MODULE or not playerObj then

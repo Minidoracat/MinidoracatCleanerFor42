@@ -709,6 +709,17 @@ function Cleaner.stampMove(item, username)
     return Cleaner.writeTouch(item, username, getTimestamp())
 end
 
+-- 移除本 MOD 的所有章（新舊 key 一起）。用於物品放進工作站：vanilla 會在製作期間每秒把
+-- 輸入物品整件廣播給全服（CraftLogic.onUpdate → GameEntityNetwork sendToAll），章在那裡
+-- 只是被重送的負擔；而且章因人、因小時而異，會讓 CompressIdenticalItems 逐 byte 比對
+-- 失敗、無法合併同型物品。沒有 modData 的物品不建表。
+function Cleaner.clearStamps(item)
+    local modData = modDataForRead(item)
+    if modData then
+        rewriteStamps(modData, nil, nil)
+    end
+end
+
 -- Kahlua 的 table.sort 是遞迴 quicksort，跑在 coroutine 堆疊上（MAX_STACK_SIZE=3000，
 -- Coroutine.java:16）。輸入已接近排序時退化成 O(n) 遞迴深度，數百筆即 stack overflow。
 -- 以下為迭代式 bottom-up merge sort：無遞迴、穩定、O(n log n)。

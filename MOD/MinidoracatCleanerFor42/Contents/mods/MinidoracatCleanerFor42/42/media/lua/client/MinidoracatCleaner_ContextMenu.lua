@@ -148,5 +148,69 @@ local function onFillInventoryObjectContextMenu(playerNum, context, items)
     context:addOption(label, deletable, showDeleteDialog, playerNum)
 end
 
+-- ===== 家具放置紀錄（MP）=====
+-- 資料在 server（WorldAudit.lua），右鍵才查、只回給自己。只列出該格目前仍存在的 sprite：
+-- 非搬移路徑（打壞、燒掉）消失的物件不會清掉 server 那筆，靠這裡過濾
+local function spritesOn(square)
+    local present = {}
+    local objects = square:getObjects()
+    for i = 0, objects:size() - 1 do
+        local object = objects:get(i)
+        local sprite = object:getSprite()
+        if sprite and sprite:getName() and not object:isFloor() then
+            present[sprite:getName()] = true
+        end
+    end
+    return present
+end
+
+function Cleaner.showPlacedInfo(args)
+    local playerObj = getPlayer()
+    if not playerObj or type(args) ~= "table" then
+        return
+    end
+    local square = getCell():getGridSquare(args.x, args.y, args.z)
+    local present = square and spritesOn(square) or {}
+    local lines = {}
+    for sprite, value in pairs(type(args.entries) == "table" and args.entries or {}) do
+        local name, at = tostring(value):match("^(.*),(%d*)$")
+        if present[sprite] and name then
+            local timeText = tonumber(at) and Cleaner.formatStampTime and Cleaner.formatStampTime(tonumber(at))
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_PlacedBy", name, timeText or "?")
+        end
+    end
+    if #lines == 0 then
+        lines[1] = getText("IGUI_MinidoracatCleaner_PlacedNone")
+    end
+    playerObj:setHaloNote(table.concat(lines, " / "), 220, 220, 120, 300)
+end
+
+local function onPlacedQuery(playerNum, square)
+    local playerObj = getSpecificPlayer(playerNum)
+    if playerObj then
+        sendClientCommand(playerObj, Cleaner.COMMAND_MODULE, "placedQuery",
+            { x = square:getX(), y = square:getY(), z = square:getZ() })
+    end
+end
+
+local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
+    if test or not isClient() then
+        return
+    end
+    for _, object in ipairs(worldobjects) do
+        local square = object.getSquare and object:getSquare()
+        if square then
+            for _ in pairs(spritesOn(square)) do
+                context:addOption(getText("IGUI_MinidoracatCleaner_PlacedQuery"), playerNum, onPlacedQuery, square)
+                return
+            end
+            return
+        end
+    end
+end
+
+-- ISWorldObjectContextMenu.lua createMenu 觸發
+Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)
+
 -- LuaEventManager.java:617
 Events.OnFillInventoryObjectContextMenu.Add(onFillInventoryObjectContextMenu)

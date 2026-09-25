@@ -116,6 +116,18 @@ local function installDropHooks()
         end
     end
 
+    -- 放進工作站（曬草架等）的物品先清章：製作期間 vanilla 每秒把整份狀態連同輸入物品
+    -- 廣播給全服（GameEntityNetwork.java:66-67；2026-09-26 正式服實測這類封包佔出向 17.5%），
+    -- 章只是被重送的負擔。在 offerItem **之前**清：它會把同一實例放進工作站並立刻 sync
+    -- （ResourceItem.java:320-356）。放入失敗時物品留在身上、少一個章，下次搬動就會重蓋。
+    if ISItemSlotAddAction and not isClient() then
+        local originalSlotAddComplete = ISItemSlotAddAction.complete
+        function ISItemSlotAddAction:complete()
+            Cleaner.clearStamps(self.item)
+            return originalSlotAddComplete(self)
+        end
+    end
+
     Events.OnProcessTransaction.Add(onProcessTransaction)
 end
 

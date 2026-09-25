@@ -337,6 +337,8 @@ local function onServerCommand(module, command, args)
         Cleaner.refreshUI()
     elseif command == "touchAck" then
         applyTouchAck(args)
+    elseif command == "placedInfo" and Cleaner.showPlacedInfo then
+        Cleaner.showPlacedInfo(args)
     end
 end
 
