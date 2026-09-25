@@ -758,6 +758,17 @@ function Cleaner.sortSafe(list, comp)
     return list
 end
 
+-- 動物 → 群組 key（AnimalDefinitions 的 group，小寫；無定義回 nil）。
+-- 散養掃描與農場治理共用同一份，分桶依據才不會漂移
+function Cleaner.getAnimalGroup(animal)
+    local definition = AnimalDefinitions.getDef(animal:getAnimalType())
+    local group = definition and definition:getGroup()
+    if not group or group == "" then
+        return nil
+    end
+    return string.lower(tostring(group))
+end
+
 -- 動物的絕對保護判定：命名／掛鉤／牽抱／持有／載具／死亡／無所在格。
 -- AnimalScanner 的散養分類與 AnimalBreeding 的農場清除共用同一份，兩邊的「保護」
 -- 才不會漂移（isWild() 不可當保護條件：動物站進圈地會自動 setWild(false)，

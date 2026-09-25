@@ -113,15 +113,6 @@ local function playerKey(playerObj)
     return tostring(playerObj:getOnlineID()) .. ":" .. Cleaner.sanitize(playerObj:getUsername())
 end
 
-local function getAnimalGroup(animal)
-    local definition = AnimalDefinitions.getDef(animal:getAnimalType())
-    local group = definition and definition:getGroup()
-    if not group or group == "" then
-        return nil
-    end
-    return string.lower(tostring(group))
-end
-
 local function warnBucket(bucket, now, scope, count, limit)
     local first = warned[bucket.key]
     if not first then
@@ -289,7 +280,7 @@ local function inspectCandidate(job, plan, candidate, zoneCache, players, radius
         return "gone"
     end
     -- 群組先查：不依賴座標，壞座標的動物也要能判斷「還算不算這一群」
-    if getAnimalGroup(animal) ~= job.group then
+    if Cleaner.getAnimalGroup(animal) ~= job.group then
         return "gone"
     end
     local ax = animal:getX()
@@ -505,7 +496,7 @@ local function runAnimalScan(now)
             -- The single source list already assigns each animal once to its nearest player.
             local onlineID = animal:getOnlineID()
             local keyID = tostring(onlineID) .. ":" .. tostring(animal:getAnimalID()) .. ":" .. tostring(index)
-            local group = getAnimalGroup(animal)
+            local group = Cleaner.getAnimalGroup(animal)
             if group and (allowedGroups._allowAll or allowedGroups[group]) then
                 local nearest = wantPerPlayer and nearestPlayer(animal, players, radius) or nil
                 -- 全域桶刻意**不**做半徑過濾：離所有玩家超過 radius 的動物在 per-player

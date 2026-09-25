@@ -81,15 +81,6 @@ local protectedOverLogged = {}
 -- HashMap<Integer> key 轉換沒有 vanilla 背書；真的不通就整條 hutch 蛋路徑失效）
 local nestboxFailLogged = false
 
-local function getAnimalGroup(animal)
-    local definition = AnimalDefinitions.getDef(animal:getAnimalType())
-    local group = definition and definition:getGroup()
-    if not group or group == "" then
-        return nil
-    end
-    return string.lower(tostring(group))
-end
-
 -- 一胎的最大隻數。**必須按上限預留而不是每隻懷孕算 1**：分娩直接建立
 -- Rand.Next(minBaby, maxBaby + 1) 隻並逐隻 addBaby()（AnimalData.java:191-202），
 -- 而 rat 是 2-10、pig 5-10、mouse 5-9、rabbit 3-7。算 1 的話「判定當下剛好等於上限」
@@ -210,7 +201,7 @@ local function collectComponent(component)
         if animal:isOnHook() then
             return
         end
-        local group = getAnimalGroup(animal)
+        local group = Cleaner.getAnimalGroup(animal)
         if not group then
             return
         end
