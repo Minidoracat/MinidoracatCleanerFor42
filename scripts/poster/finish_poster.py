@@ -37,10 +37,6 @@ def fit(draw, text, max_w, size, *names):
     return f
 
 
-def stroked(draw, xy, text, f, fill, stroke, w):
-    draw.text(xy, text, font=f, fill=fill, stroke_width=w, stroke_fill=stroke)
-
-
 def tape(draw, cx, cy, w=64, h=26):
     draw.rectangle([cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2], fill=TAPE)
 
@@ -73,21 +69,20 @@ def cleaner_poster():
     # 文字
     f_brand = fit(d, "Minidoracat", bx1 - bx0 - 60, 54, "segoeuib.ttf", "arialbd.ttf")
     f_title = fit(d, "CLEANER", bx1 - bx0 - 56, 106, "impact.ttf", "arialbd.ttf")
-    stroked(d, (bx0 + 30, by0 + 30), "Minidoracat", f_brand, PALE, INK, 3)
-    stroked(d, (bx0 + 28, by0 + 88), "CLEANER", f_title, GOLD, INK, 5)
+    d.text((bx0 + 30, by0 + 30), "Minidoracat", font=f_brand, fill=PALE, stroke_width=3, stroke_fill=INK)
+    d.text((bx0 + 28, by0 + 88), "CLEANER", font=f_title, fill=GOLD, stroke_width=5, stroke_fill=INK)
     # for Build 42 小板
     f_sub = font(38, "segoeuib.ttf", "arialbd.ttf")
     sw = d.textlength("for Build 42", font=f_sub)
     d.rectangle([bx0, by1 + 10, bx0 + sw + 44, by1 + 66], fill=(52, 46, 34, 225),
                 outline=BOARD_EDGE, width=3)
-    stroked(d, (bx0 + 22, by1 + 16), "for Build 42", f_sub, PALE, INK, 2)
+    d.text((bx0 + 22, by1 + 16), "for Build 42", font=f_sub, fill=PALE, stroke_width=2, stroke_fill=INK)
     return im
 
 
 def save(im):
     small = im.resize((512, 512), Image.LANCZOS).convert("RGB")
     out = os.path.join(SP, "posters")
-    os.makedirs(out, exist_ok=True)
     targets = [
         os.path.join(out, "poster.png"),
         os.path.join(out, "preview.png"),

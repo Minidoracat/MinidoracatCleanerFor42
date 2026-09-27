@@ -128,11 +128,11 @@ def summarise(target: Path) -> dict:
     return {"header": header, "spans": merged, "frames": frames}
 
 
-def percentile(sorted_values: list[float], q: float) -> float:
-    """線性插值分位數。不用 statistics.quantiles：它要 n>=2，而 span 常有單筆樣本。"""
+def p95(sorted_values: list[float]) -> float:
+    """線性插值 p95。不用 statistics.quantiles：它要 n>=2，而 span 常有單筆樣本。"""
     if len(sorted_values) == 1:
         return sorted_values[0]
-    pos = q * (len(sorted_values) - 1)
+    pos = 0.95 * (len(sorted_values) - 1)
     low = int(pos)
     high = min(low + 1, len(sorted_values) - 1)
     return sorted_values[low] + (sorted_values[high] - sorted_values[low]) * (pos - low)
@@ -150,12 +150,12 @@ def fmt(values: list[float], thresholds: tuple[float, ...] = (0.5, 1.0)) -> str:
     )
     return (
         f"次數 {len(values):>7}  平均 {statistics.fmean(values):>7.4f}ms  "
-        f"中位 {statistics.median(ordered):>7.4f}ms  p95 {percentile(ordered, 0.95):>7.4f}ms  "
+        f"中位 {statistics.median(ordered):>7.4f}ms  p95 {p95(ordered):>7.4f}ms  "
         f"最長 {max(values):>7.3f}ms  {over}"
     )
 
 
-def report(label: str, data: dict, top: int = 12) -> None:
+def report(label: str, data: dict) -> None:
     print(f"\n===== {label} =====")
     print(f"來源：{data['header'].name}")
     frames = data["frames"]
@@ -171,7 +171,7 @@ def report(label: str, data: dict, top: int = 12) -> None:
               f"（＝註冊在 OnTick 上的 callback 數）"
               f"、合計 {sum(tick) / len(frames):.4f}ms")
     print(f"\n最耗時的 span（依總計）：")
-    for name, lengths in sorted(spans.items(), key=lambda kv: -sum(kv[1]))[:top]:
+    for name, lengths in sorted(spans.items(), key=lambda kv: -sum(kv[1]))[:12]:
         print(f"  {name:<38} {fmt(lengths)}")
 
 

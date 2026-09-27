@@ -88,16 +88,6 @@ function PickerCell:render()
         self:drawText(item.detail, textX + self.textW + 10, textY,
             muted.r, muted.g, muted.b, muted.a, FONT)
     end
-    -- 右緣動作提示（結果清單＋）：hover 時 accent 高亮，指出「點了會發生什麼」
-    local glyph = self.actionGlyph
-    if glyph then
-        if not self.glyphW then
-            self.glyphW = getTextManager():MeasureStringX(FONT, glyph)
-        end
-        local color = hovered and COLORS.ACCENT or COLORS.TEXT_MUTED
-        self:drawText(glyph, self.width - 8 - self.glyphW, textY,
-            color.r, color.g, color.b, color.a, FONT)
-    end
 end
 
 -- ============ 側邊欄（目標切換；六項固定，直畫） ============
@@ -160,7 +150,6 @@ function MinidoracatCleanerPicker:new(x, y, width, height, playerObj)
     o.titleBarFont = FONT
     o.titleFontHgt = getTextManager():getFontHeight(FONT)
     o.mode = TARGETS[1].mode
-    o.target = TARGETS[1].key
     o.targetDef = TARGETS[1]
     o.applyAllowed = false
     o.selectedValues = {}
@@ -177,13 +166,10 @@ end
 
 -- 清單工廠：框架在走 VirtualList（物件池，UIElement 數量只隨 viewport 成長——
 -- 物品清單數千筆）；缺席退 ISScrollingListBox。兩路徑都是單擊觸發 clickHandler(entry)。
--- opts.checkedField＝勾選集欄位名（"resultCheckedSet"／"listCheckedSet"；nil＝無勾選框）；
--- opts.glyph＝右緣動作符號。
-function MinidoracatCleanerPicker:buildList(x, y, width, height, clickHandler, opts)
-    opts = opts or {}
-    local glyph, checkedField = opts.glyph, opts.checkedField
+-- checkedField＝勾選集欄位名（"resultCheckedSet"／"listCheckedSet"）。
+function MinidoracatCleanerPicker:buildList(x, y, width, height, clickHandler, checkedField)
     local checkbox = checkedField ~= nil
-    local VirtualList = Skin.virtualListClass()
+    local VirtualList = Skin.VirtualList
     if VirtualList then
         local window = self
         local list = VirtualList.new({
@@ -192,7 +178,6 @@ function MinidoracatCleanerPicker:buildList(x, y, width, height, clickHandler, o
             createCell = function() return ISPanel.new(PickerCell, 0, 0, 0, 0) end,
             bindCell = function(_, cell, item)
                 cell.cellItem = item
-                cell.actionGlyph = glyph
                 cell.showCheckbox = checkbox
                 cell.checkedField = checkedField
                 cell.pickerWindow = window
@@ -281,7 +266,7 @@ function MinidoracatCleanerPicker:createChildren()
     -- 搜尋結果（點選＝勾選）
     local resultsHeight = LIST_ROW * 10
     self.resultsList = self:buildList(x0, y, innerWidth, resultsHeight,
-        MinidoracatCleanerPicker.onResultClick, { checkedField = "resultCheckedSet" })
+        MinidoracatCleanerPicker.onResultClick, "resultCheckedSet")
     y = y + resultsHeight + 4
 
     -- 加入列（貼結果清單正下方）：「全選/取消」＋上限值欄（覆寫目標才顯示）＋「加入勾選」
@@ -313,7 +298,7 @@ function MinidoracatCleanerPicker:createChildren()
     -- 目前清單（點選＝勾選；批量設值/移除走下方按鈕——點一下就刪太容易誤觸）
     local selectedHeight = LIST_ROW * 7
     self.selectedList = self:buildList(x0, y, innerWidth, selectedHeight,
-        MinidoracatCleanerPicker.onSelectedClick, { checkedField = "listCheckedSet" })
+        MinidoracatCleanerPicker.onSelectedClick, "listCheckedSet")
     y = y + selectedHeight + 4
 
     -- 批量操作列（貼目前清單正下方）：「全選/取消」＋「設定數值」（覆寫目標才顯示；
@@ -537,58 +522,62 @@ function MinidoracatCleanerPicker:refreshResults()
     self:setListData(self.resultsList, shown)
 end
 
--- 「全選/取消」（結果清單）：可見結果全都勾了就整批取消，否則補勾到全滿。
--- 只動可見項——跨搜尋累積的其他勾選不受影響
+-- 勾選集的單項翻轉（結果清單與目前清單同一套語意，各自帶欄位名）
+local function flipOne(window, setField, countField, value)
+    local set = window[setField]
+    if set[value] then
+        set[value] = nil
+        window[countField] = window[countField] - 1
+    else
+        set[value] = true
+        window[countField] = window[countField] + 1
+    end
+end
+
+-- 「全選/取消」：values 全都勾了就整批取消，否則補勾到全滿。
+-- 只動傳入的可見項——跨搜尋累積的其他勾選不受影響
+local function flipAll(window, values, setField, countField)
+    local set = window[setField]
+    local allChecked = true
+    for _, value in ipairs(values) do
+        if not set[value] then
+            allChecked = false
+            break
+        end
+    end
+    for _, value in ipairs(values) do
+        local checked = set[value] == true
+        if allChecked and checked then
+            set[value] = nil
+            window[countField] = window[countField] - 1
+        elseif not allChecked and not checked then
+            set[value] = true
+            window[countField] = window[countField] + 1
+        end
+    end
+end
+
 function MinidoracatCleanerPicker:onToggleAllResults()
     local shown = self.shownEntries or {}
     if #shown == 0 then
         return
     end
-    local allChecked = true
-    for _, entry in ipairs(shown) do
-        if not self.resultCheckedSet[entry.value] then
-            allChecked = false
-            break
-        end
+    local values = {}
+    for index, entry in ipairs(shown) do
+        values[index] = entry.value
     end
-    for _, entry in ipairs(shown) do
-        local checked = self.resultCheckedSet[entry.value] == true
-        if allChecked and checked then
-            self.resultCheckedSet[entry.value] = nil
-            self.resultCheckedCount = self.resultCheckedCount - 1
-        elseif not allChecked and not checked then
-            self.resultCheckedSet[entry.value] = true
-            self.resultCheckedCount = self.resultCheckedCount + 1
-        end
-    end
+    flipAll(self, values, "resultCheckedSet", "resultCheckedCount")
     self:updateAddButton()
     if self.resultsList and not self.resultsList.isVirtual then
         self:refreshResults()
     end
 end
 
--- 「全選/取消」（目前清單）：同一套翻轉語意
 function MinidoracatCleanerPicker:onToggleAllList()
     if #self.selectedValues == 0 then
         return
     end
-    local allChecked = true
-    for _, token in ipairs(self.selectedValues) do
-        if not self.listCheckedSet[token] then
-            allChecked = false
-            break
-        end
-    end
-    for _, token in ipairs(self.selectedValues) do
-        local checked = self.listCheckedSet[token] == true
-        if allChecked and checked then
-            self.listCheckedSet[token] = nil
-            self.listCheckedCount = self.listCheckedCount - 1
-        elseif not allChecked and not checked then
-            self.listCheckedSet[token] = true
-            self.listCheckedCount = self.listCheckedCount + 1
-        end
-    end
+    flipAll(self, self.selectedValues, "listCheckedSet", "listCheckedCount")
     self:updateBatchButtons()
     if self.selectedList and not self.selectedList.isVirtual then
         self:refreshSelected()
@@ -629,7 +618,6 @@ function MinidoracatCleanerPicker:applyTargetSelection(def)
         self.lastSearchText = ""
     end
     self.targetDef = def
-    self.target = def.key
     self.mode = def.mode
     self.selectedValues = {}
     self.selectedSet = {}
@@ -685,13 +673,7 @@ function MinidoracatCleanerPicker:onResultClick(item)
     if not (item and item.value) then
         return
     end
-    if self.resultCheckedSet[item.value] then
-        self.resultCheckedSet[item.value] = nil
-        self.resultCheckedCount = self.resultCheckedCount - 1
-    else
-        self.resultCheckedSet[item.value] = true
-        self.resultCheckedCount = self.resultCheckedCount + 1
-    end
+    flipOne(self, "resultCheckedSet", "resultCheckedCount", item.value)
     self:updateAddButton()
     -- VirtualList cell 每幀直查勾選集；退回清單的勾選是文字前綴，要重組
     if self.resultsList and not self.resultsList.isVirtual then
@@ -747,15 +729,8 @@ function MinidoracatCleanerPicker:onSelectedClick(item)
     if not (item and item.value) then
         return
     end
-    if self.listCheckedSet[item.value] then
-        self.listCheckedSet[item.value] = nil
-        self.listCheckedCount = self.listCheckedCount - 1
-    else
-        self.listCheckedSet[item.value] = true
-        self.listCheckedCount = self.listCheckedCount + 1
-    end
+    flipOne(self, "listCheckedSet", "listCheckedCount", item.value)
     self:updateBatchButtons()
-    -- VirtualList cell 每幀直查 listCheckedSet；退回清單的勾選是文字前綴，要重組
     if self.selectedList and not self.selectedList.isVirtual then
         self:refreshSelected()
     end

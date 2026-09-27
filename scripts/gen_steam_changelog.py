@@ -30,7 +30,6 @@ DST = os.path.join(REPO, "STEAM_CHANGELOG.md")
 
 SECTION_EMOJI = {
     "新增": "✨", "變更": "🔄", "更新": "🔄", "修正": "🔧", "效能": "⚡", "移除": "🗑️", "安全": "🛡️",
-    "Added": "✨", "Changed": "🔄", "Fixed": "🔧", "Removed": "🗑️", "Notes": "📝",
 }
 
 # 術語啟發式：命中不代表錯（可能是刻意提及的 MOD 名），但玩家層 bullet 出現這些
@@ -208,11 +207,7 @@ def main():
             for mm in pat.finditer(line):
                 jargon.append(f"  第 {lineno} 行 {desc}：{mm.group().strip()}")
     if jargon:
-        seen, uniq = set(), []
-        for j in jargon:
-            if j not in seen:
-                seen.add(j)
-                uniq.append(j)
+        uniq = list(dict.fromkeys(jargon))
         print(f"\n術語警示（{len(uniq)} 處）——玩家層條目出現這些通常代表該改寫 CHANGELOG："
               "\n" + "\n".join(uniq[:12]))
         if len(uniq) > 12:
