@@ -23,6 +23,7 @@ Requires the author's [url=https://steamcommunity.com/sharedfiles/filedetails/?i
 [*] [b]Farm-safe[/b]: penned animals are never cleaned by default; named, led, carried or hooked animals are always protected; "gentle mode" only stops breeding and kills nothing
 [*] [b]Warned before cleanup[/b]: red text over the player + chat message + sound; green notice when done
 [*] [b]See who dumped it[/b]: hover an item to see the last dropper and last mover, with time
+[*] [b]See who placed furniture[/b]: in multiplayer, right-click furniture or a built object and choose "Who placed this" to see the placer and time; furniture pickup, placement, scrapping and finished builds are also written to the log
 [*] [b]Cleanup log[/b]: every warning and cleanup written to its own log file for admins to audit (`Zomboid\Logs\<start time>_MinidoracatCleanerFor42.txt`)
 [*] [b]List manager[/b]: right-click in game, search by name or item ID, tick to add in bulk; admins can apply to sandbox with one click, effective immediately
 [*] [b]Sandbox options[/b]: 24 settings in "General / Items / Animals" tabs, each explained; master switches for items and animals, so you can turn everything off and keep only manual deletion
