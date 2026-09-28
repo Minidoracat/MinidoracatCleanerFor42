@@ -3,58 +3,41 @@
 
 [hr][/hr]
 
-[h2]✨ What is this?[/h2]
-Sanitation service for the apocalypse — for "junk everywhere on the floor" and "animals bred until the server chokes". Three things:
+Sanitation service for the apocalypse: right-click to delete items from any container, while ground junk and runaway animal breeding get cleaned up automatically.
+
+[h2]📦 Requirements[/h2]
 [list]
-[*] [b]Delete items from any container[/b] — backpacks, cabinets, trunks, the floor; right-click and it's gone, no more garbage-can-only
-[*] [b]Auto-clean duplicate items piling up on the ground[/b] — someone dumped 500 bullets? Warn first, clean only if still over the limit on the next scan
-[*] [b]Auto-remove overbred animals[/b] — runaway rats, rabbits and chickens are a known B42 performance killer
+[*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url], on both server and clients
+[*] Build 42 only, singleplayer and multiplayer; servers must enable it
 [/list]
 
-[h2]⚠️ Requirement[/h2]
-Requires the author's [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] (listed as a required item). Install on both server and clients, and place it before this mod in the server's Mods list.
+[h2]🚀 Quick start[/h2]
+[olist]
+[*] Select items in your inventory or a nearby container, right-click "Delete" and confirm
+[*] Auto-cleanup works out of the box and warns nearby players first
+[*] Admins can tune the limits in sandbox settings or switch auto-cleanup off
+[*] Right-click the ground to open the list manager and add items or animals
+[/olist]
 
-[h2]🧰 Features[/h2]
+[h2]✨ Features[/h2]
 [list]
-[*] [b]Protected deletion[/b]: favorites, equipped/worn items and key rings are never deleted; confirmation dialog; in multiplayer the server validates, so regular players need no admin rights
-[*] [b]Tells junk from scenery[/b]: natural forest-floor branches, logs and bushes are not treated as player dumping — they get a high-tolerance limit and won't be cleaned by mistake
-[*] [b]Newest piles go first[/b]: items that were legitimately there are kept; items enter detection the moment they hit the ground, no waiting for the next cycle
-[*] [b]Three animal limits[/b]: around each player, server-wide total, and per farm — each configurable and overridable per species (e.g. "rat=20, chicken=80")
-[*] [b]Farm-safe[/b]: penned animals are never cleaned by default; named, led, carried or hooked animals are always protected; "gentle mode" only stops breeding and kills nothing
-[*] [b]Warned before cleanup[/b]: red text over the player + chat message + sound; green notice when done
-[*] [b]See who dumped it[/b]: hover an item to see the last dropper and last mover, with time
-[*] [b]See who placed furniture[/b]: in multiplayer, right-click furniture or a built object and choose "Who placed this" to see the placer and time; furniture pickup, placement, scrapping and finished builds are also written to the log
-[*] [b]Cleanup log[/b]: every warning and cleanup written to its own log file for admins to audit (`Zomboid\Logs\<start time>_MinidoracatCleanerFor42.txt`)
-[*] [b]List manager[/b]: right-click in game, search by name or item ID, tick to add in bulk; admins can apply to sandbox with one click, effective immediately
-[*] [b]Sandbox options[/b]: 24 settings in "General / Items / Animals" tabs, each explained; master switches for items and animals, so you can turn everything off and keep only manual deletion
-[*] [b]Singleplayer & multiplayer[/b]; languages: Traditional Chinese / Simplified Chinese / English / Japanese
+[*] [b]Delete from any container[/b]: backpacks, cabinets, trunks, the floor
+[*] [b]Ground piles auto-cleaned[/b]: warning first, newest pile goes first
+[*] [b]Junk vs. scenery[/b]: natural forest branches and grass are left alone
+[*] [b]Animal limits[/b]: near players, server-wide and per farm
+[*] [b]Farm-safe[/b]: penned animals are left alone; can stop breeding without killing
+[*] [b]See who did it[/b]: who dropped an item, who placed furniture
+[*] [b]Cleanup log[/b]: every warning and cleanup is recorded
 [/list]
+📖 [b]Details, sandbox options and FAQ:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095568/]Cleaner Guide: Features, Settings & FAQ[/url]
 
-[h2]⚙️ Defaults[/h2]
-Works out of the box — "normal play almost never triggers it, malicious dumping is stopped immediately":
-[list]
-[*] Player-dropped items: 100 of the same kind per chunk (8×8 tiles), 400 per player's scan area
-[*] Natural / high-tolerance items: 300 per chunk, 2000 per scan area
-[*] Free-roaming animals: 50 per group; penned animals and breeding not managed by default
-[*] Default species: rats, mice, rabbits, chickens
-[/list]
+[h2]🔗 More Minidoracat mods[/h2]
+All my mods are in the [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat Mods for B42 collection[/url] — pick what you need.
 
-[h2]🔗 MOD series[/h2]
+[h2]💬 Feedback & community[/h2]
 [list]
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap for B42[/url] — image-based world map & minimap
-[*] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] — required UI library for this mod
-[/list]
-
-[h2]📋 MOD information[/h2]
-[list]
-[*] [b]Mod ID:[/b] MinidoracatCleanerFor42
-[*] [b]Supported version:[/b] Build 42.20.2+
-[*] [b]Singleplayer / Multiplayer:[/b] both supported
-[/list]
-
-[h2]💬 Support & community[/h2]
-[list]
-[*] [url=https://discord.gg/Gur2V67]Discord community[/url]
+[*] [url=https://github.com/Minidoracat/MinidoracatCleanerFor42/issues]GitHub Issues[/url]
+[*] [url=https://discord.gg/Gur2V67]Discord[/url]
 [/list]
 
 [h2]☕ Support the author[/h2]
