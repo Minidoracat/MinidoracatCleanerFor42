@@ -1164,12 +1164,13 @@ check(fetchDelta * 50 < gridLookups,
         .. "；釘住『不是 per-square 取得』）")
 
 -- ===== 情境六：Kahlua 沒有的標準 Lua 全域（靜態掃描）=====
--- 這個 harness 跑在標準 Lua 上，next/assert/xpcall 全都存在，所以「執行測試」在架構上
+-- 這個 harness 跑在標準 Lua 上，next/xpcall 全都存在，所以「執行測試」在架構上
 -- 永遠抓不到誤用——0.2.2 的 next(index) 就是這樣溜到正式服，讓動物清理每輪拋
 -- 「Object tried to call nil」而整輪中斷（正式服 server-console 累積 91 次）。
 -- Kahlua 的 BaseLib 只註冊 collectgarbage/error/getfenv/getmetatable/pcall/print/
 -- rawequal/rawget/rawset/select/setfenv/setmetatable/tonumber/tostring/type/unpack；
--- pairs/ipairs 另由 TableLib 註冊，可用。以下三個在整個 kahlua 樹都找不到。
+-- pairs/ipairs 另由 TableLib 註冊，可用。以下兩個在整個 kahlua 樹都找不到；assert 雖然也不在
+-- BaseLib，但遊戲根目錄 stdlib.lua 以 Lua 定義了它（J2SEPlatform 每個 Lua 環境都會載入），可用。
 print()
 print("情境六：Kahlua 缺少的標準 Lua 全域（原始碼掃描）")
 
@@ -1185,7 +1186,7 @@ local SOURCES = {
     "client/MinidoracatCleaner_Picker.lua",
     "client/MinidoracatCleaner_Skin.lua",
 }
-local FORBIDDEN = { "next", "assert", "xpcall" }
+local FORBIDDEN = { "next", "xpcall" }
 
 local hits = {}
 for _, rel in ipairs(SOURCES) do
@@ -1216,7 +1217,7 @@ for _, rel in ipairs(SOURCES) do
 end
 
 for _, h in ipairs(hits) do print("        " .. h) end
-check(#hits == 0, "沒有使用 Kahlua 不存在的全域（next／assert／xpcall）")
+check(#hits == 0, "沒有使用 Kahlua 不存在的全域（next／xpcall）")
 
 -- 同一類「harness 跑標準 Lua 所以永遠測不到」的 Kahlua 差異：**佇列不得就地設 nil**。
 -- Kahlua 的 rawset(k, nil) 會從底層 LinkedHashMap 刪掉該 key（KahluaTableImpl.java:59-62），
