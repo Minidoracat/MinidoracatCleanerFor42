@@ -41,7 +41,7 @@
   "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides": "削除上限の上書き：飼育（牧場ごと）",
   "Sandbox_MinidoracatCleanerFor42_AnimalZoneLimitOverrides_tooltip": "上の牧場削除上限に対するグループ別例外。例 chicken=80。0 はそのグループの飼育動物を削除しない意味です。",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType": "区画ごとの上限（高許容）",
-  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType_tooltip": "高許容アイテムの区画ごとの上限。次の2種類がこの緩い値を使います。①投棄者の印が付いていない物（森林の枝や草など世界生成の物、または本 MOD 導入前から地面にあった物）②下の高許容リストに載せた物。通常の上限とは別に集計されるため、「世界生成の丸太 100 個＋誰かが投棄した丸太 150 個」ではその 150 個の超過分だけが清掃されます。0 で高許容アイテムを一切清掃しません。",
+  "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerType_tooltip": "高許容アイテムの区画ごとの上限。次の2種類がこの緩い値を使います。（1）投棄者の印が付いていない物（森林の枝や草など世界生成の物、または本 MOD 導入前から地面にあった物）、（2）下の高許容リストに載せた物。通常の上限とは別に集計されるため、「世界生成の丸太 100 個＋誰かが投棄した丸太 150 個」ではその 150 個の超過分だけが清掃されます。0 で高許容アイテムを一切清掃しません。",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea": "スキャン範囲の上限（高許容）",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceMaxPerTypeArea_tooltip": "高許容アイテムのスキャン範囲での合計上限（プレイヤーごとに個別集計）。0 で高許容アイテムを範囲制限の対象外にします。",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "高許容アイテムリスト",
