@@ -91,6 +91,7 @@ function Skin.notify(playerObj, message, kind)
             title = getText("IGUI_MinidoracatCleaner_ToastTitle"),
             message = message,
             colors = colors,
+            maxLines = 3, -- 較長的通知（複製清單後的貼上說明、套用結果、各語言較長的譯文）換行顯示，不再截成一行
         })
         return
     end
