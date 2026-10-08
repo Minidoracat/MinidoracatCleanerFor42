@@ -89,6 +89,9 @@ local function showDeleteDialog(items, playerNum)
         width = 460
         height = 150
     end
+    -- ISModalDialog:new 會先用 CalcSize 依文字把寬高撐大（ISModalDialog.lua:166-189），
+    -- 置中要用撐完的尺寸，不然長譯文的確認框整個偏右（法文實機 598 寬、偏右約 124px）
+    width, height = ISModalDialog.CalcSize(width, height, (text:gsub("\\n", "\n")))
     local x = getPlayerScreenLeft(playerNum) + (getPlayerScreenWidth(playerNum) - width) / 2
     local y = getPlayerScreenTop(playerNum) + (getPlayerScreenHeight(playerNum) - height) / 2
     -- ISModalDialog.lua:187-210; ISInventoryPane.lua:656-671

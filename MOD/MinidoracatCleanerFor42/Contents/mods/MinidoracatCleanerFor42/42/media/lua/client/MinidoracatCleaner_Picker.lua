@@ -96,7 +96,7 @@ end
 
 local SIDEBAR_W = 224
 local SIDEBAR_ROW = 36
-local MAIN_W = 700 -- 主區固定寬；總寬＝側欄（動態）＋主區
+local MAIN_W = 700 -- 主區預設寬；按鈕列放不下時加寬（createChildren）；總寬＝側欄（動態）＋主區
 
 local PickerSidebar = ISPanel:derive("MinidoracatCleanerPickerSidebar")
 
@@ -243,10 +243,25 @@ function MinidoracatCleanerPicker:createChildren()
         sidebarW = 500
     end
     self.sidebarW = sidebarW
-    -- 視窗總寬＝動態側欄＋固定主區；先定寬再排元件（右對齊元件靠 self.width）
-    self:setWidth(sidebarW + PAD + MAIN_W + PAD)
+    -- 按鈕寬照 Medium 字型量（原版 ISButton:new 只用 Small 量字寬，按鈕又改畫 Medium，長譯文就畫出框外）；
+    -- 計數以四位數預留。哪一列的按鈕加起來超過主區，主區就跟著加寬（法文實機：Copier dans le presse-papiers 等）
+    local tm = getTextManager()
+    local function fitW(minW, text)
+        return math.max(minW, tm:MeasureStringX(FONT, text) + 20)
+    end
+    local toggleW = fitW(120, getText("IGUI_MinidoracatCleaner_PickerToggleAll"))
+    local addW = fitW(190, getText("IGUI_MinidoracatCleaner_PickerAddChecked", "9999"))
+    local setW = fitW(190, getText("IGUI_MinidoracatCleaner_PickerSetValue", "9999"))
+    local removeW = fitW(190, getText("IGUI_MinidoracatCleaner_PickerRemoveChecked", "9999"))
+    local clearW = fitW(96, getText("IGUI_MinidoracatCleaner_PickerClear"))
+    local copyW = fitW(170, getText("IGUI_MinidoracatCleaner_PickerCopy"))
+    local applyW = fitW(190, getText("IGUI_MinidoracatCleaner_PickerApply"))
+    local valueLabelW = tm:MeasureStringX(FONT, getText("IGUI_MinidoracatCleaner_PickerValueLabel"))
+    local innerWidth = math.max(math.max(MAIN_W, toggleW + PAD + valueLabelW + PAD + 80 + PAD + addW),
+        math.max(toggleW + PAD + setW + PAD + removeW, clearW + PAD + copyW + PAD + applyW))
+    -- 視窗總寬＝動態側欄＋主區；先定寬再排元件（右對齊元件靠 self.width）
+    self:setWidth(sidebarW + PAD + innerWidth + PAD)
     local x0 = sidebarW + PAD -- 主區左緣（側欄右側）
-    local innerWidth = MAIN_W
     local y = top + PAD
 
     -- 側欄：六個寫入目標直接切換
@@ -270,11 +285,11 @@ function MinidoracatCleanerPicker:createChildren()
     y = y + resultsHeight + 4
 
     -- 加入列（貼結果清單正下方）：「全選/取消」＋上限值欄（覆寫目標才顯示）＋「加入勾選」
-    self.resultAllButton = ISButton:new(x0, y, 120, ROW,
+    self.resultAllButton = ISButton:new(x0, y, toggleW, ROW,
         getText("IGUI_MinidoracatCleaner_PickerToggleAll"), self, MinidoracatCleanerPicker.onToggleAllResults)
     self.resultAllButton:initialise()
     self:addChild(self.resultAllButton)
-    self.addButton = ISButton:new(x0 + innerWidth - 190, y, 190, ROW,
+    self.addButton = ISButton:new(x0 + innerWidth - addW, y, addW, ROW,
         "", self, MinidoracatCleanerPicker.onAddChecked)
     self.addButton:initialise()
     self:addChild(self.addButton)
@@ -303,30 +318,30 @@ function MinidoracatCleanerPicker:createChildren()
 
     -- 批量操作列（貼目前清單正下方）：「全選/取消」＋「設定數值」（覆寫目標才顯示；
     -- 數值取上方加入列的上限值欄）＋「移除勾選」
-    self.listAllButton = ISButton:new(x0, y, 120, ROW,
+    self.listAllButton = ISButton:new(x0, y, toggleW, ROW,
         getText("IGUI_MinidoracatCleaner_PickerToggleAll"), self, MinidoracatCleanerPicker.onToggleAllList)
     self.listAllButton:initialise()
     self:addChild(self.listAllButton)
-    self.setValueButton = ISButton:new(x0 + 120 + PAD, y, 190, ROW,
+    self.setValueButton = ISButton:new(x0 + toggleW + PAD, y, setW, ROW,
         "", self, MinidoracatCleanerPicker.onSetValueChecked)
     self.setValueButton:initialise()
     self:addChild(self.setValueButton)
-    self.removeButton = ISButton:new(x0 + 120 + PAD + 190 + PAD, y, 190, ROW,
+    self.removeButton = ISButton:new(x0 + toggleW + PAD + setW + PAD, y, removeW, ROW,
         "", self, MinidoracatCleanerPicker.onRemoveChecked)
     self.removeButton:initialise()
     self:addChild(self.removeButton)
     y = y + ROW + PAD
 
     -- 按鈕列：主動作「套用」accent 靠右；破壞性「清空」放最左與主動作隔開防誤觸
-    self.clearButton = ISButton:new(x0, y, 96, ROW,
+    self.clearButton = ISButton:new(x0, y, clearW, ROW,
         getText("IGUI_MinidoracatCleaner_PickerClear"), self, MinidoracatCleanerPicker.onClear)
     self.clearButton:initialise()
     self:addChild(self.clearButton)
-    self.copyButton = ISButton:new(x0 + 96 + PAD, y, 170, ROW,
+    self.copyButton = ISButton:new(x0 + clearW + PAD, y, copyW, ROW,
         getText("IGUI_MinidoracatCleaner_PickerCopy"), self, MinidoracatCleanerPicker.onCopy)
     self.copyButton:initialise()
     self:addChild(self.copyButton)
-    self.applyButton = ISButton:new(x0 + innerWidth - 190, y, 190, ROW,
+    self.applyButton = ISButton:new(x0 + innerWidth - applyW, y, applyW, ROW,
         getText("IGUI_MinidoracatCleaner_PickerApply"), self, MinidoracatCleanerPicker.onApply)
     self.applyButton:initialise()
     self:addChild(self.applyButton)
