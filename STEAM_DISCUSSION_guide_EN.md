@@ -5,7 +5,7 @@
 [b]繁體中文版：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095548/]Cleaner 完整說明：功能、設定與常見問題[/url]
 
 [h2]🚀 Quick start[/h2]
-Build 42.20.2+, singleplayer and multiplayer; UI in Traditional/Simplified Chinese, English, Japanese. Install Minidoracat UI Library on server and clients, listed before this mod in the server's Mods line.
+Build 42.20.2+, singleplayer and multiplayer; UI in Traditional/Simplified Chinese, English, Japanese, Korean, Russian, Spanish, Portuguese, Turkish, French, Polish, German (languages other than Chinese, English and Japanese are AI-translated; corrections welcome). Install Minidoracat UI Library on server and clients, listed before this mod in the server's Mods line.
 [olist]
 [*] [b]Delete[/b]: select items (multi-select works), right-click "Delete", confirm
 [*] [b]Auto-cleanup[/b]: on by default; warning first, cleanup only if still over at the next check

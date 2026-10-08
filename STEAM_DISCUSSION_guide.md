@@ -5,7 +5,7 @@
 [b]English version:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095568/]Cleaner Guide: Features, Settings & FAQ[/url]
 
 [h2]🚀 快速上手[/h2]
-支援 Build 42.20.2 以上，單機與多人皆可；介面有繁體中文／簡體中文／English／日本語。前置 [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] 伺服器與客戶端都要裝，伺服器 Mods 清單請把它排在本 MOD 之前。
+支援 Build 42.20.2 以上，單機與多人皆可；介面有繁體中文／簡體中文／English／日本語／한국어／Русский／Español／Português／Türkçe／Français／Polski／Deutsch（中英日以外為 AI 翻譯，歡迎回報）。前置 [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url] 伺服器與客戶端都要裝，伺服器 Mods 清單請把它排在本 MOD 之前。
 [olist]
 [*] [b]手動刪除[/b]：在物品欄或附近容器選取物品（可多選），右鍵「刪除」並確認
 [*] [b]自動清理[/b]：裝好就會運作，超量時先警告，下一次檢查仍超量才清理
