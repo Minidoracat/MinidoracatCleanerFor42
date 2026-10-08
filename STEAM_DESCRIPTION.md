@@ -9,6 +9,8 @@
 [list]
 [*] 必裝：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]，伺服器與客戶端都要裝
 [*] Build 42 專用，單機與多人皆可；多人需由伺服器啟用
+[*] [b]中途加入／移除：[/b]都可以
+[*] [b]介面語言：[/b]繁體中文、简体中文、English、日本語
 [/list]
 
 [h2]🚀 快速上手[/h2]

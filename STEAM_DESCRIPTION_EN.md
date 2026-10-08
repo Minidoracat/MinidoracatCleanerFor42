@@ -9,6 +9,8 @@ Sanitation service for the apocalypse: right-click to delete items from any cont
 [list]
 [*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url], on both server and clients
 [*] Build 42 only, singleplayer and multiplayer; servers must enable it
+[*] [b]Add/remove mid-save:[/b] safe either way
+[*] [b]Languages:[/b] 繁體中文, 简体中文, English, 日本語
 [/list]
 
 [h2]🚀 Quick start[/h2]
