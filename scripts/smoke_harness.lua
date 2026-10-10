@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十三個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十四個情境並斷言結果。
 
     lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
@@ -97,6 +97,8 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
             真的蓋出來的、轉向不改放置者、查詢限半徑、client 只顯示仍存在的物件
 情境四十三：物品放進工作站前清章——offerItem 當下新舊章都已清除（vanilla 隨即 sync 並在製作期間
             每秒全服廣播）、不動其他 modData、原回傳值照傳
+情境四十四：沙盒清單的全形逗號分隔——真正的 U+FF0C（沙盒 UI 設定）與 SandboxVars.lua 載入後
+            被 Kahlua lexer 截成的 "\f" 都要切開
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -4519,6 +4521,15 @@ end
 check(SLOT_ADD_SEEN and not leftover43, "放進工作站當下新舊章都已清除")
 check(SLOT_ADD_SEEN and SLOT_ADD_SEEN.vanillaKey == 7, "非本 MOD 的 modData 不受影響")
 check(result43 == "original-result", "原動作的回傳值原樣傳回")
+end
+
+print("情境四十四：沙盒清單的全形逗號分隔（UI 設定值與 SandboxVars.lua 截斷值）")
+do
+-- "\239\188\140" 是 U+FF0C 的 UTF-8；"\f" 是同一個字經 Kahlua lexer 截斷後的樣子
+local list44 = MinidoracatCleaner.parseList("Base.Axe\239\188\140Base.Log\fBase.Plank;Base.Nails")
+check(#list44 == 4 and list44[1] == "Base.Axe" and list44[2] == "Base.Log"
+    and list44[3] == "Base.Plank" and list44[4] == "Base.Nails",
+    "全形逗號、截斷後的 \\f、分號都當分隔符")
 end
 if failures > 0 then
     print(failures .. " 項失敗")

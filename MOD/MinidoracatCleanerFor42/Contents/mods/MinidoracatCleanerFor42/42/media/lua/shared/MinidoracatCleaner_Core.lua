@@ -194,6 +194,13 @@ function Cleaner.getOption(name)
     return value
 end
 
+-- 全形逗號「，」（U+FF0C）也當分隔符（沙盒 tooltip 有承諾）。原始碼不能直接寫這個字：Kahlua 的
+-- lexer 把 >255 的字元截成 1 byte（LexState.java:194-199），執行期只剩 "\f"，比不中真正的全形逗號。
+-- 寫成 UTF-8 位元組的十進位跳脫才對：save() 存的就是這三個 byte，newstring 再以 UTF-8 解回（:245-247）。
+-- "\f" 仍要認：伺服器的 <名>_SandboxVars.lua 原樣寫出字串值（StringConfigOption.java:85-86）、
+-- 再經同一個 lexer 載入（SandboxOptions.java:822），檔案裡的全形逗號讀進來就是 "\f"。
+local FULLWIDTH_COMMA = "\239\188\140"
+
 function Cleaner.parseList(value, fallback)
     local result = {}
     local text = trim(value)
@@ -206,7 +213,7 @@ function Cleaner.parseList(value, fallback)
         return result
     end
 
-    text = text:gsub("，", ","):gsub(";", ",")
+    text = text:gsub(FULLWIDTH_COMMA, ","):gsub("[;\f]", ",")
     for token in text:gmatch("([^,]+)") do
         token = trim(token)
         if token ~= "" then
