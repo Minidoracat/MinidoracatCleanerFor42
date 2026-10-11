@@ -84,11 +84,11 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
             fertilizedTime 會讓母禽永久不孕）；地面蛋要發 ItemStats；一整組相連圈地
             與其中所有群組每個 pass 合計只付一次 getAllDZones；逐群組覆寫
             （RanchBreedingOverrides）蓋過共用預設、覆寫 0＝該群組不抑制、
-            共用預設 0 時覆寫仍獨自武裝
+            共用預設 0 時覆寫仍獨自武裝；老年不佔繁殖名額（算進去會讓停在上限的牧場斷代）
 情境四十：農場清除——以「每座農場」（連通圈地）計數，兩段式警告（emergency 直清）；
             同 tick 走訪＝天然 recount（不持跨 tick 候選）；與 scanner 共用 3/tick 移除
             預算（各自 3/tick 會推翻活鎖降壓）；保護個體計入現存數但不可刪；NaN 計數
-            不刪；雞舍內計數不進候選；幼體優先；警告記錄隨群組消失回收
+            不刪；雞舍內計數不進候選；老年優先、其次幼體；警告記錄隨群組消失回收
 情境四十一：清單產生器直通沙盒——token 級 WYSIWYG（預載原始 token 原樣保留、同 group
             upsert 原位替換、整值寫回）、權限 gate 鏡射封包層 Capability 守門、
             getOptionByName 先擋未宣告選項（set 對未知名拋 Java 例外）、SP 不送封包、
@@ -674,7 +674,7 @@ ISItemSlotAddAction = { complete = function(self)
 end }
 
 ANIMAL_REMOVED = {}
--- opts：id / atype / x / y / wild / baby / hutch / dzone / named
+-- opts：id / atype / x / y / wild / baby / old / hutch / dzone / named
 function makeTestAnimal(opts)
     local gone = false
     local animal
@@ -692,6 +692,8 @@ function makeTestAnimal(opts)
         getZ = function() return opts.z or 0 end,
         isWild = function() return opts.wild == true end,
         isBaby = function() return opts.baby == true end,
+        -- 老年判定（IsoAnimal.java:1977-1984）：引擎按存活天數與該物種壽命算，fixture 直接給結果
+        isGeriatric = function() return opts.old == true end,
         -- **忠於引擎**：`IsoAnimal.remove()` → `delete()` → `removeFromSquare()`，而
         -- IsoMovingObject 只清 current/last（IsoMovingObject.java:705）、IsoObject 只把自己
         -- 從該格的清單移除（IsoObject.java:4539-4544）——**兩者都不清 this.square 欄位**，
@@ -3720,7 +3722,7 @@ sandbox.AnimalScanIntervalSeconds = 0
 ANIMAL_ROSTER = {}
 
 -- 建一隻 fixture 動物：pregnant/pregnancyTime 直接寫進 opts，斷言時讀 animal._opts
-local function breeder(id, atype, pregnant, pregnancyTime)
+local function breeder(id, atype, pregnant, pregnancyTime, old)
     return makeTestAnimal({
         id = id,
         atype = atype,
@@ -3728,6 +3730,7 @@ local function breeder(id, atype, pregnant, pregnancyTime)
         y = 100,
         pregnant = pregnant,
         pregnancyTime = pregnancyTime,
+        old = old,
     })
 end
 
@@ -3862,6 +3865,28 @@ runTicks(2)
 check(PIG_H._opts.pregnant == true,
     "覆寫 0 ⇒ 該群組不做繁殖抑制（共用預設 10 本來會抑制）")
 sandbox.RanchBreedingOverrides = nil
+
+-- ⑨ 老年不佔繁殖名額：老年母獸不能再懷孕、幾週到幾個月內老死（AnimalData.java:1297-1298、
+--    :383-386），算進名額會讓停在上限的牧場斷代。5 隻 pig 其中 2 隻老年、1 隻懷孕，上限 13 ⇒
+--    未老 3 ＋ 一胎預留 10 = 13 未超過 ⇒ 懷孕保留；老年也算的話 5 + 10 = 15 > 13 會被取消
+PIG_I = breeder(91, "sow", true, 5)
+OLD_I1 = breeder(92, "sow", nil, nil, true)
+OLD_I2 = breeder(93, "sow", nil, nil, true)
+ANIMAL_ZONES = { makeTestZone({ id = 91, animals = {
+    PIG_I, OLD_I1, OLD_I2, breeder(94, "sow"), breeder(95, "sow"),
+} }) }
+sandbox.MaxRanchBreedingPerGroup = 13
+fireTenMinutes()
+runTicks(2)
+check(PIG_I._opts.pregnant == true,
+    "老年不佔名額：未老 3 ＋ 一胎預留 10 = 13 未超過上限 ⇒ 懷孕保留")
+-- 活性：同一座農場那 2 隻不再是老年 ⇒ 5 + 10 = 15 > 13，證明 fixture 正好卡在邊界上
+OLD_I1._opts.old = false
+OLD_I2._opts.old = false
+fireTenMinutes()
+runTicks(2)
+check(PIG_I._opts.pregnant == false,
+    "活性：同一座農場沒有老年時 5 + 10 > 13 ⇒ 懷孕被取消")
 ANIMAL_ZONES = {}
 ANIMAL_ROSTER = nil
 sandbox.AnimalCleanupEnabled = nil
@@ -3887,6 +3912,7 @@ local function sow(id, extra)
         y = extra.y or 100,
         z = extra.z,
         baby = extra.baby,
+        old = extra.old,
         named = extra.named,
     })
 end
@@ -4074,7 +4100,7 @@ check(#ANIMAL_REMOVED == 0 and HUTCH_ALIVE_40B == 12,
     "純雞舍內 12 超 2 ⇒ 一隻都不刪（實際刪 " .. #ANIMAL_REMOVED
         .. "、內存活 " .. HUTCH_ALIVE_40B .. "）")
 
--- ⑥ 幼體優先（損失最小）：13 隻含 3 幼體、上限 10 ⇒ 刪的 3 隻全是幼體
+-- ⑥ 沒有老年時幼體優先（損失次小）：13 隻含 3 幼體、上限 10 ⇒ 刪的 3 隻全是幼體
 ZONE_R6 = makeTestZone({ id = 151, animals = {} })
 for i = 1, 10 do
     ZONE_R6._opts.animals[i] = sow(7500 + i)
@@ -4094,6 +4120,38 @@ end
 check(#ANIMAL_REMOVED == 3 and BABY_GONE_40 == 3,
     "超 3 且有 3 幼體 ⇒ 刪的全是幼體（實際刪 " .. #ANIMAL_REMOVED
         .. "、幼體 " .. BABY_GONE_40 .. "）")
+
+-- ⑥b 老年優先：老年不能再懷孕、幾週到幾個月內老死，刪牠損失最小，新生幼體才留得下來接班。
+--     13 隻＝8 成年 ＋ 2 老年 ＋ 3 幼體、上限 10 ⇒ 超 3：先刪 2 老年、再刪 1 幼體，成年不動。
+--     老年排在走訪序中段：只靠走訪序或幼體優先都刪不到牠們
+ZONE_R6B = makeTestZone({ id = 152, animals = {} })
+for i = 1, 8 do
+    ZONE_R6B._opts.animals[i] = sow(7550 + i)
+end
+for i = 9, 10 do
+    ZONE_R6B._opts.animals[i] = sow(7550 + i, { old = true })
+end
+for i = 11, 13 do
+    ZONE_R6B._opts.animals[i] = sow(7550 + i, { baby = true })
+end
+ANIMAL_ZONES = { ZONE_R6B }
+ANIMAL_REMOVED = {}
+runTicks(4)
+OLD_GONE_40 = 0
+for i = 9, 10 do
+    if ZONE_R6B._opts.animals[i].isGone() then
+        OLD_GONE_40 = OLD_GONE_40 + 1
+    end
+end
+BABY_GONE_40B = 0
+for i = 11, 13 do
+    if ZONE_R6B._opts.animals[i].isGone() then
+        BABY_GONE_40B = BABY_GONE_40B + 1
+    end
+end
+check(#ANIMAL_REMOVED == 3 and OLD_GONE_40 == 2 and BABY_GONE_40B == 1,
+    "超 3、有 2 老年 3 幼體 ⇒ 先刪 2 老年再刪 1 幼體、成年不動（實際刪 " .. #ANIMAL_REMOVED
+        .. "、老年 " .. OLD_GONE_40 .. "、幼體 " .. BABY_GONE_40B .. "）")
 
 -- ⑦ 天然 recount：警告輪之後、清除輪之前玩家自己處理掉超額 ⇒ 確認輪重新計數、
 --    一隻不清（每輪重新讀取成員清單，沒有跨 tick 候選快照可過期）

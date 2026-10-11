@@ -30,7 +30,7 @@
   "Sandbox_MinidoracatCleanerFor42_AnimalScanIntervalSeconds": "动物扫描间隔",
   "Sandbox_MinidoracatCleanerFor42_AnimalScanIntervalSeconds_tooltip": "动物检查之间的实际秒数：非圈养扫描、警告确认和农场删除轮次都按此进行。农场繁殖上限例外，按游戏时间运行（每个游戏小时检查几次）。",
   "Sandbox_MinidoracatCleanerFor42_MaxZoneAnimalsPerGroup": "清除上限：圈养（每座农场）",
-  "Sandbox_MinidoracatCleanerFor42_MaxZoneAnimalsPerGroup_tooltip": "会删除超额的圈养动物，按每座农场、每个分组分别统计。农场是一整组相连的动物圈地，也是游戏判定哪些动物可以互相繁殖的单位；不管玩家站在哪里，同一座农场的数量都相同。圈地和鸡舍内的动物会统计；起过名字、被抱着或牵着的永远不统计也不处理，鸡舍内的动物永远不会删除。附近玩家会先收到警告；下次仍超额才从最年轻的开始删除。",
+  "Sandbox_MinidoracatCleanerFor42_MaxZoneAnimalsPerGroup_tooltip": "会删除超额的圈养动物，按每座农场、每个分组分别统计。农场是一整组相连的动物圈地，也是游戏判定哪些动物可以互相繁殖的单位；不管玩家站在哪里，同一座农场的数量都相同。圈地和鸡舍内的动物会统计；起过名字、被抱着或牵着的永远不统计也不处理，鸡舍内的动物永远不会删除。附近玩家会先收到警告；下次仍超额才开始删除：先删老年动物（不能再生、很快会老死），再从最年轻的删起。",
   "Sandbox_MinidoracatCleanerFor42_MaxGlobalAnimalsPerGroup": "清除上限：非圈养（全服）",
   "Sandbox_MinidoracatCleanerFor42_MaxGlobalAnimalsPerGroup_tooltip": "会删除超额的非圈养动物，跨整个服务器统计所有当前已加载的动物，不考虑玩家距离。这是玩家周边上限之外的另一个维度，两者同时生效。农场或鸡舍内的圈养动物永远不会因本上限删除。",
   "Sandbox_MinidoracatCleanerFor42_AnimalGlobalLimitOverrides": "清除上限覆盖：非圈养（全服）",
@@ -47,7 +47,7 @@
   "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "高容忍物品列表",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceList_tooltip": "指定哪些物品要按高容忍上限来处理，不管它身上有没有丢弃者记录。可以填物品 ID（例如 Base.Log）、英文名称，或游戏里显示的名称（按服务器语言，例如填「木板」）。用逗号（半角或全角都行）或分号分隔。和保护列表的区别：高容忍只是把上限放宽，超过高容忍上限还是会被清理；保护列表则是永远不清理。也可以留空，没有丢弃者记录的物品本来就会自动按高容忍处理。（如果关闭了「记录物品丢弃者」，所有物品都不会有记录，这时只看这个列表。）",
   "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup": "繁殖上限：圈养（每座农场）",
-  "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup_tooltip": "不会删除任何动物，只会阻止农场超过此数量继续增长。当一座农场某分组的现有动物加上未出生动物（怀孕和受精蛋）超过此数值，会终止最新怀孕并把最新受精蛋变回普通蛋；最接近出生的会保留，不会碰任何活着的动物。",
+  "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup_tooltip": "不会删除任何动物，只会阻止农场超过此数量继续增长。当一座农场某分组未进入老年的现有动物加上未出生动物（怀孕和受精蛋）超过此数值，会终止最新怀孕并把最新受精蛋变回普通蛋；最接近出生的会保留，不会碰任何活着的动物。老年动物不计入：它们不能再生、很快会老死，如果占着名额，满员的农场生不出接班的幼崽，最后会整群老死。因此农场可能暂时多出几只正在老死的动物；需要硬性上限时，请同时设置上方的清除上限（会先删老年动物）。",
   "Sandbox_MinidoracatCleanerFor42_RanchBreedingOverrides": "繁殖上限覆盖：圈养（每座农场）",
   "Sandbox_MinidoracatCleanerFor42_RanchBreedingOverrides_tooltip": "针对上方繁殖上限的逐分组例外。例如 chicken=20 让每座农场的鸡最多自然增长到 20 只；未列出的分组使用默认值。填 0 表示该分组不做繁殖抑制。只取消尚未出生的（怀孕和受精蛋），不会删除任何动物。分组名支持关键字。"
 }

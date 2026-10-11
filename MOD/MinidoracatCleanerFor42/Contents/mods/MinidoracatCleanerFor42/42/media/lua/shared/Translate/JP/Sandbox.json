@@ -47,7 +47,7 @@
   "Sandbox_MinidoracatCleanerFor42_HighToleranceList": "高許容アイテムリスト",
   "Sandbox_MinidoracatCleanerFor42_HighToleranceList_tooltip": "投棄者の印の有無にかかわらず高許容の上限を適用するアイテム。キーワードで指定できます：アイテム ID（例：Base.Log）、英語名、翻訳名（サーバー言語に従う）。半角カンマ・全角カンマ・セミコロンで区切ります。保護リストとの違い：高許容は上限を緩めるだけなので、高許容の上限を超えれば清掃されます。保護リストは決して清掃しません。空欄のままでも問題ありません。印の無いアイテムは元から自動的に高許容になります。（「アイテムの投棄者を記録」がオフのときはどのアイテムにも印が付かないため、このリストだけが適用されます。）",
   "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup": "繁殖上限：飼育（牧場ごと）",
-  "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup_tooltip": "動物は一匹も削除せず、牧場の成長だけを止めます。現存動物と未出生分（妊娠・受精卵）が上限を超えると、新しい妊娠を終了し、新しい受精卵を通常の卵に戻します。生まれる時期が近いものを残します。",
+  "Sandbox_MinidoracatCleanerFor42_MaxRanchBreedingPerGroup_tooltip": "動物は一匹も削除せず、牧場の成長だけを止めます。老獣を除く現存動物と未出生分（妊娠・受精卵）が上限を超えると、新しい妊娠を終了し、新しい受精卵を通常の卵に戻します。生まれる時期が近いものを残します。老獣は数えません。もう繁殖できず、まもなく老衰で死ぬため、枠を占めると満員の牧場に跡継ぎの子が生まれず、やがて絶えてしまいます。そのため一時的に上限を少し超えることがあります。厳密な上限が必要なら、上の削除上限も設定してください（老獣から先に削除します）。",
   "Sandbox_MinidoracatCleanerFor42_RanchBreedingOverrides": "繁殖上限の上書き：飼育（牧場ごと）",
   "Sandbox_MinidoracatCleanerFor42_RanchBreedingOverrides_tooltip": "上の繁殖上限に対するグループごとの例外。例：chicken=20 で各牧場のニワトリは繁殖抑制により最大 20 匹まで。未記載のグループは既定値を使用。0 はそのグループを抑制しないことを意味します。取り消されるのは未出生（妊娠・有精卵）のみで、生きている動物には一切触れません。グループ名はキーワード対応。"
 }

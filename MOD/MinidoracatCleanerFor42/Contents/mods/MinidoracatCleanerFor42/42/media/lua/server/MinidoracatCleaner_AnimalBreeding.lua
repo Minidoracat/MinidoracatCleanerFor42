@@ -15,7 +15,8 @@ local C = Cleaner.CONSTANTS
 --     硬編碼 FULL；正式服 67 人峰值實測 IsoAnimal.updateLOS 佔主執行緒 41.7%，JavaPatch
 --     W18 立案證據），反應延遲要是秒級。
 --   繁殖上限 MaxRanchBreedingPerGroup（可逐群組覆寫 RanchBreedingOverrides；覆寫 0＝該群組不抑制）：
---     現存＋未出生超過就取消最新的懷孕／受精蛋，一隻現有牲畜都不動。掛 EveryTenMinutes
+--     未進入老年的現存＋未出生超過就取消最新的懷孕／受精蛋，一隻現有牲畜都不動（老年不計入
+--     的理由見 suppressGroup）。掛 EveryTenMinutes
 --     遊戲事件（GameTime.java:636-650，每遊戲小時 6 次；預設 DayLength 下約 37.5 真實秒）
 --     ——抑制的節拍由「生物時鐘」決定：pregnantTime/fertilizedTime 走遊戲時間，孕期最短
 --     8 遊戲日、蛋孵化 ~50 遊戲小時，最緊視窗仍有 300 輪以上的餘裕；DayLength 調快時
@@ -160,7 +161,8 @@ end
 -- 如 ISItemSlot.lua:414）再 addAll(values())，receiver 都是 public 的 ArrayList。
 --
 -- 每個群組的 bucket：
---   live       全部現存（含 hutch 內、含保護個體）——繁殖上限的基數：農場人口壓力
+--   live       全部現存（含 hutch 內、含保護個體）——農場人口；減掉 old 就是繁殖上限的基數
+--   old        live 裡已進入老年的隻數（IsoAnimal.isGeriatric）——不佔繁殖名額，見 suppressGroup
 --   cullCount  可治理現存（排除保護個體；含 hutch 內的未保護個體）——清除門檻的基數，
 --              與散養側「protected 不計入 count」同語意
 --   removable  清除候選：只有站在世界上的未保護個體。hutch **內**的不進候選——牠們已被
@@ -175,6 +177,7 @@ local function collectComponent(component)
         if not bucket then
             bucket = {
                 live = 0,
+                old = 0,
                 cullCount = 0,
                 unborn = 0,
                 nanSkipped = 0,
@@ -207,6 +210,11 @@ local function collectComponent(component)
         end
         local bucket = bucketFor(group)
         bucket.live = bucket.live + 1
+        -- 老年：遊戲動物資訊顯示「老年」用的同一個判定（IsoAnimal.java:1977-1984、2025-2027）
+        local old = animal:isGeriatric() == true
+        if old then
+            bucket.old = bucket.old + 1
+        end
         if not Cleaner.isProtectedAnimal(animal) then
             bucket.cullCount = bucket.cullCount + 1
             if not insideHutch then
@@ -219,6 +227,7 @@ local function collectComponent(component)
                 else
                     bucket.removable[#bucket.removable + 1] = {
                         animal = animal,
+                        old = old,
                         baby = animal:isBaby() == true,
                         order = bucket.live,
                     }
@@ -350,7 +359,12 @@ end
 -- ===== 抑制（繁殖上限）=====
 
 local function suppressGroup(instance, group, bucket, limit, budget)
-    local overage = (bucket.live + bucket.unborn) - limit
+    -- 老年不佔繁殖名額：老年母獸不能再懷孕（AnimalData.canBePregnant，AnimalData.java:1297-1298），
+    -- 老年個體每小時扣血、不再回血（:383-386），幾週到幾個月內老死。算進名額的話，牧場停在
+    -- 上限時新的懷孕全被取消，要等老年老死、騰出一整胎的名額才准懷孕；整群年紀相近時母獸
+    -- 那時也都老了，牧場就斷代（2026-10-11 使用者裁定）。
+    -- 代價：牧場會暫時多出 old 隻；要硬上限就同時設清除門檻（cullSort 先刪老年）
+    local overage = (bucket.live - bucket.old + bucket.unborn) - limit
     if overage <= 0 then
         return 0
     end
@@ -393,6 +407,7 @@ local function suppressGroup(instance, group, bucket, limit, budget)
             instance:getZ(),
             "group=" .. Cleaner.sanitize(group)
                 .. " live=" .. bucket.live
+                .. " old=" .. bucket.old
                 .. " unborn=" .. bucket.unborn
                 .. " limit=" .. limit
                 .. " eggs=" .. cancelledEggs
@@ -456,7 +471,13 @@ end
 -- ===== 清除（農場清除門檻）=====
 
 local function cullSort(a, b)
-    -- 幼體優先（損失最小），再按走訪序（穩定）
+    -- 老年優先：不能再懷孕、幾週到幾個月內老死，刪牠損失最小，也讓新生幼體留下來接班。
+    -- 幼體優先時，牧場停在上限的期間每胎都被刪光，要等老年老死騰出名額才有幼體留下；整群
+    -- 年紀相近時母獸那時也都老了，牧場就斷代（2026-10-11 使用者裁定改成老年優先）。
+    -- 其次幼體（損失次小），最後按走訪序（穩定）
+    if a.old ~= b.old then
+        return a.old
+    end
     if a.baby ~= b.baby then
         return a.baby
     end

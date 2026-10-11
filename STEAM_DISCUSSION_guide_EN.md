@@ -39,8 +39,8 @@ Runaway rats, rabbits and chickens are a known B42 performance killer; this is w
 [*] [b]Per-species overrides[/b] for every cap, e.g. rat=20,chicken=80
 [*] Default species: rats, mice, rabbits, chickens; "Cleanable animal groups" accepts * or all for every animal, including other mods'
 [*] Near-player cap warns that player first and removes if still over next check, wild animals and babies first. Server-wide cap: no warning, log only
-[*] [b]Farm-safe[/b]: animals in or next to an animal zone, or belonging to a hutch, are not free-roaming; farm caps default to 0 (off). Farm removal skips animals inside hutches and takes babies first
-[*] [b]Gentle mode[/b]: set only the breeding cap, leave farm removal at 0 — farms stop growing, nothing dies. Over the cap the newest pregnancies end and newest fertilised eggs become ordinary eggs; those closest to birth stay
+[*] [b]Farm-safe[/b]: animals in or next to an animal zone, or belonging to a hutch, are not free-roaming; farm caps default to 0 (off). Farm removal skips animals inside hutches and takes geriatric animals first, then babies
+[*] [b]Gentle mode[/b]: set only the breeding cap, leave farm removal at 0 — farms stop growing, nothing dies. Over the cap the newest pregnancies end and newest fertilised eggs become ordinary eggs; those closest to birth stay. Geriatric animals don't count toward the breeding cap, so the farm can still raise young to replace them
 [*] [b]Protected[/b]: named, on a hook, leashed, held or in a vehicle — never counted or touched
 [*] Max 3 removals per game tick, so big cleanups run in batches; the notice shows how many remain nearby
 [/list]
@@ -88,7 +88,7 @@ Lists take item IDs (Base.Log), English or server-language names, separated by c
 [*] Removal cap: unranched (near players) (50) + override
 [*] Removal cap: unranched (server-wide) (0) + override
 [*] Removal cap: ranched (per farm) (0) + override
-[*] Breeding cap: ranched (per farm) (0) + override: cancels pregnancies and fertilised eggs, never kills
+[*] Breeding cap: ranched (per farm) (0) + override: cancels pregnancies and fertilised eggs, never kills; geriatric animals don't count
 [*] Animal scan radius (64, 16–128): only affects the near-player cap
 [*] Animal scan interval (10 s, 5–600): free-roaming checks, confirmations, farm removal; breeding runs on game time, a few checks per game hour
 [/list]
@@ -109,6 +109,7 @@ Cap 0 = off. Overrides like rat=20,rabbit=40; [b]override 0 = that group is exem
 [*] [b]Only right-click delete, no auto-cleanup?[/b] Turn off "Enable item cleanup" and "Enable animal cleanup".
 [*] [b]Players don't see "Delete"?[/b] In multiplayer check "Allow manual deletion"; favorites and equipped/worn items never show it.
 [*] [b]Why were my chickens removed?[/b] Outside an animal zone they are free-roaming and use the near-player cap. Name them, keep them in a zone, or set chicken=0 in the override.
+[*] [b]Why does my farm have more animals than the breeding cap?[/b] Geriatric animals don't count toward it: they can't breed and will soon die of old age, and counting them would leave a full farm with no young to replace them until it dies out. For a hard ceiling, also set the farm removal cap; it removes geriatric animals first.
 [/list]
 
 [h2]💬 Reporting[/h2]
