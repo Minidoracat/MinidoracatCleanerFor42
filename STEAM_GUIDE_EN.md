@@ -1,6 +1,5 @@
 <!-- 指南網址：https://steamcommunity.com/sharedfiles/filedetails/?id=3817857742 -->
 <!-- Steam guide source (English): the full reference for this mod; the Workshop description only summarizes. Format and sync: pz-family-docs/release.md「完整說明：Steam 指南」 -->
-<!-- 2026-10-11: written from the released v42.21.0-0.7.1. Unreleased edits in STEAM_DISCUSSION_guide*.md at that time (farm cleanup removes old animals first; old animals don't count toward the breeding cap) go into this file and STEAM_GUIDE.md at release, then guide.sync -->
 <!-- 標題：📖 Cleaner Mod Guide: Features, Settings & FAQ -->
 <!-- 摘要：Illustrated guide to the Minidoracat Cleaner mod: right-click deletion, automatic cleanup of ground piles and animal numbers, who dropped or placed what, the cleanup log, the list manager, sandbox options and FAQ. -->
 === 🚀 Quick start
@@ -89,7 +88,7 @@ Runaway rats, rabbits and chickens are a known B42 performance killer; this is w
 [list]
 [*] [b]Not free-roaming[/b]: animals in or next to an animal zone, or belonging to a hutch.
 [*] [b]Farms off by default[/b]: farm caps default to 0.
-[*] [b]Farm removal[/b]: skips animals inside hutches and takes babies first.
+[*] [b]Farm removal[/b]: skips animals inside hutches and takes geriatric animals first, then babies.
 [*] [b]Protected[/b]: named, on a hook, leashed, held or in a vehicle — never counted or touched.
 [/list]
 [h3]Gentle mode[/h3]
@@ -97,6 +96,7 @@ Runaway rats, rabbits and chickens are a known B42 performance killer; this is w
 [*] [b]How[/b]: set only the breeding cap, leave farm removal at 0.
 [*] [b]Result[/b]: farms stop growing, nothing dies.
 [*] [b]Over the cap[/b]: the newest pregnancies end and newest fertilised eggs become ordinary eggs; those closest to birth stay.
+[*] [b]Geriatric animals don't count[/b]: they can't breed and will soon die of old age; leaving them out lets the farm raise young to replace them, so it may briefly hold a few extra old animals.
 [/list]
 === 🧰 Who dropped it, who placed it
 {{img:05-tooltip.jpg}}
@@ -174,7 +174,7 @@ Lists take item IDs (Base.Log), English or server-language names, separated by c
 [tr][td]Removal cap: unranched (near players)[/td][td]50[/td][td]Has an override[/td][/tr]
 [tr][td]Removal cap: unranched (server-wide)[/td][td]0[/td][td]Has an override[/td][/tr]
 [tr][td]Removal cap: ranched (per farm)[/td][td]0[/td][td]Has an override[/td][/tr]
-[tr][td]Breeding cap: ranched (per farm)[/td][td]0[/td][td]Has an override; cancels pregnancies and fertilised eggs, never kills[/td][/tr]
+[tr][td]Breeding cap: ranched (per farm)[/td][td]0[/td][td]Has an override; cancels pregnancies and fertilised eggs, never kills; geriatric animals don't count[/td][/tr]
 [tr][td]Animal scan radius[/td][td]64 (16–128)[/td][td]Only affects the near-player cap[/td][/tr]
 [tr][td]Animal scan interval[/td][td]10 s (5–600)[/td][td]Free-roaming checks, confirmations, farm removal; breeding runs on game time, a few checks per game hour[/td][/tr]
 [/table]
@@ -227,6 +227,11 @@ Lists take item IDs (Base.Log), English or server-language names, separated by c
 [list]
 [*] Outside an animal zone they are free-roaming and use the near-player cap.
 [*] Name them, keep them in a zone, or set chicken=0 in the override.
+[/list]
+[h3]Why does my farm have more animals than the breeding cap?[/h3]
+[list]
+[*] Geriatric animals don't count toward it: they can't breed and will soon die of old age, and counting them would leave a full farm with no young to replace them until it dies out.
+[*] For a hard ceiling, also set the farm removal cap; it removes geriatric animals first.
 [/list]
 === 💬 Reporting
 [list]
