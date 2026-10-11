@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Ovelha",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Veado",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Peru",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Guaxinim"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Guaxinim",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Limpador] A opção de sandbox '%1' tem entradas estragadas ou que não correspondem a nada: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Digite-as de novo como IDs de item (ex.: Base.Nails) ou nomes em inglês: o texto que não está em inglês se estraga a cada reinício do servidor.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Digite-as de novo como chaves de grupo de animais (ex.: rat) ou nomes em inglês: o texto que não está em inglês se estraga a cada reinício do servidor."
 }

@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Mouton",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Cerf",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Dinde",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Raton-laveur"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Raton-laveur",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Nettoyeur] L'option de sandbox '%1' contient des entrées abîmées ou qui ne correspondent à rien : %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Saisissez-les à nouveau sous forme d'ID d'objet (ex. Base.Nails) ou de noms anglais : le texte non anglais est abîmé à chaque redémarrage du serveur.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Saisissez-les à nouveau sous forme de clés de groupe d'animaux (ex. rat) ou de noms anglais : le texte non anglais est abîmé à chaque redémarrage du serveur."
 }

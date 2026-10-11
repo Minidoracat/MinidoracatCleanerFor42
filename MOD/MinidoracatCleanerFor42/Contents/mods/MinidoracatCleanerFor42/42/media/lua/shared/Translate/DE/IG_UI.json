@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Schaf",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Reh",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Truthahn",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Waschbär"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Waschbär",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Aufräumer] Die Sandbox-Option '%1' enthält beschädigte oder nirgends passende Einträge: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Bitte als Gegenstands-IDs (z. B. Base.Nails) oder englische Namen neu eintragen: Nicht-englischer Text wird bei jedem Serverneustart beschädigt.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Bitte als Tiergruppenschlüssel (z. B. rat) oder englische Namen neu eintragen: Nicht-englischer Text wird bei jedem Serverneustart beschädigt."
 }

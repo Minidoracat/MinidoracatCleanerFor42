@@ -127,6 +127,7 @@ Runaway rats, rabbits and chickens are a known B42 performance killer; this is w
 [tr][td]manual_delete[/td][td]Manual deletion[/td][/tr]
 [tr][td]moveable[/td][td]Servers: furniture pickup, place, scrap, repair, rotate[/td][/tr]
 [tr][td]build[/td][td]Servers: build[/td][/tr]
+[tr][td]sandbox_text[/td][td]Servers, at startup: a sandbox list entry is damaged or matches nothing[/td][/tr]
 [/table]
 === 🧰 List manager
 {{img:06-picker-items.jpg}}
@@ -165,7 +166,7 @@ Defaults: normal play almost never triggers it, malicious dumping is stopped at 
 [tr][td]Item scan radius[/td][td]80 (16–128)[/td][td]Squares around each player[/td][/tr]
 [tr][td]Item scan interval[/td][td]60 s (10–3600)[/td][td]Real seconds; also the warning→cleanup gap[/td][/tr]
 [/table]
-Lists take item IDs (Base.Log), English or server-language names, separated by commas or semicolons.
+Lists take item IDs (Base.Log) or English names, separated by commas or semicolons; part of a name is enough, but 1-2 letter entries must match a whole word (e.g. TV). Translated names work in singleplayer only (see Known limitations).
 [h3]Animals[/h3]
 [table]
 [tr][th]Option[/th][th]Default[/th][th]Notes[/th][/tr]
@@ -180,7 +181,7 @@ Lists take item IDs (Base.Log), English or server-language names, separated by c
 [/table]
 [list]
 [*] [b]Cap 0[/b]: off.
-[*] [b]Override format[/b]: like rat=20,rabbit=40.
+[*] [b]Override format[/b]: like rat=20,rabbit=40, using group keys or English names.
 [*] [b]Override 0[/b]: that group is exempt, [b]not "zero allowed"[/b].
 [/list]
 === ⚠️ Known limitations
@@ -195,6 +196,7 @@ Lists take item IDs (Base.Log), English or server-language names, separated by c
 [*] [b]Workstations[/b]: items put into a workstation (e.g. drying rack) lose their last-mover record.
 [*] [b]Huge containers[/b]: with 20,000+ items in one container, a deletion may need a second press.
 [*] [b]List manager entry[/b]: always shows in singleplayer; no option to hide it yet.
+[*] [b]Multiplayer lists must be in English[/b]: every server restart damages non-English text (Chinese, accented letters, etc.) in sandbox text options, and the original is lost; this is a game limitation. Use item IDs, animal group keys or English names. Damaged entries or entries matching nothing are logged at startup, and admins with sandbox permission get a chat warning when they join.
 [/list]
 === ❓ FAQ
 [h3]Can I turn off the debug features?[/h3]

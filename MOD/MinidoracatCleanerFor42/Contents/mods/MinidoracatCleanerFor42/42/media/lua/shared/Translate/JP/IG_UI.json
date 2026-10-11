@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "ヒツジ",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "シカ",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "シチメンチョウ",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "アライグマ"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "アライグマ",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "「クリーナー」サンドボックス設定「%1」に、壊れているか何にも一致しない項目があります：%2。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "アイテム ID（例 Base.Nails）か英語名で入力し直してください。英語以外の文字はサーバーの再起動のたびに壊れます。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "動物グループ key（例 rat）か英語名で入力し直してください。英語以外の文字はサーバーの再起動のたびに壊れます。"
 }

@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Овцы",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Олени",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Индюки",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Еноты"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Еноты",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Очистка] В параметре песочницы '%1' есть испорченные или ни с чем не совпадающие записи: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Введите их заново как ID предметов (например, Base.Nails) или английские названия: неанглийский текст портится при каждом перезапуске сервера.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Введите их заново как ключи групп животных (например, rat) или английские названия: неанглийский текст портится при каждом перезапуске сервера."
 }

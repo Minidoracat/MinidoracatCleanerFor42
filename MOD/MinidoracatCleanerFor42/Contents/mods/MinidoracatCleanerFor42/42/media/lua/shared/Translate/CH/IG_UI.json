@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "羊",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "鹿",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "火雞",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "浣熊"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "浣熊",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "「清理系統」沙盒選項「%1」有已損毀或比對不到任何東西的項目：%2。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "請改填物品 ID（如 Base.Nails）或英文名稱：非英文字每次伺服器重開都會損毀。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "請改填動物群組 key（如 rat）或英文名稱：非英文字每次伺服器重開都會損毀。"
 }

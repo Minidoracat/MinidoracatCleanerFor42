@@ -127,6 +127,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [tr][td]manual_delete[/td][td]手動刪除[/td][/tr]
 [tr][td]moveable[/td][td]多人伺服器：家具撿起、放下、拆解、修理、轉向[/td][/tr]
 [tr][td]build[/td][td]多人伺服器：建造完成[/td][/tr]
+[tr][td]sandbox_text[/td][td]多人伺服器開機時：沙盒清單有損毀或比對不到任何東西的項目[/td][/tr]
 [/table]
 === 🧰 清單管理器
 {{img:06-picker-items-zh.jpg}}
@@ -165,7 +166,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [tr][td]物品掃描半徑[/td][td]80（16–128）[/td][td]以每位玩家為中心的格數[/td][/tr]
 [tr][td]物品掃描間隔[/td][td]60 秒（10–3600）[/td][td]實際秒數，也是「警告→確認」的間隔[/td][/tr]
 [/table]
-兩份清單可填物品 ID（如 Base.Log）、英文名稱或伺服器語言的翻譯名稱，用逗號或分號分隔。
+兩份清單可填物品 ID（如 Base.Log）或英文名稱，用逗號或分號分隔；填名稱的一部分即可，但 1 到 2 個字母的項目要整個單字相符（如 TV）。翻譯名稱只在單機有效（見「已知限制」）。
 [h3]動物[/h3]
 [table]
 [tr][th]選項[/th][th]預設[/th][th]說明[/th][/tr]
@@ -180,7 +181,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [/table]
 [list]
 [*] [b]上限填 0[/b]：不管。
-[*] [b]覆寫寫法[/b]：如 rat=20,rabbit=40。
+[*] [b]覆寫寫法[/b]：如 rat=20,rabbit=40，群組填群組 key 或英文名稱。
 [*] [b]覆寫填 0[/b]：代表該群組不受這個上限管，[b]不是「一隻都不准」[/b]。
 [/list]
 === ⚠️ 已知限制
@@ -195,6 +196,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [*] [b]工作站[/b]：物品放進曬草架等工作站時，最後操作者紀錄會被清掉。
 [*] [b]極大容器[/b]：單一容器堆到兩萬件以上的極端情況，手動刪除可能要按第二次才刪得完。
 [*] [b]清單管理器選項[/b]：「清理系統：清單管理...」是設定工具，單機一律出現，目前沒有選項可以隱藏。
+[*] [b]多人伺服器的清單只能填英文[/b]：伺服器每次重開都會把沙盒文字設定裡的非英文字（中文、帶重音的字母等）損毀，原文找不回來，這是遊戲本身的限制。請填物品 ID、動物群組 key 或英文名稱；開機時發現損毀或比對不到任何東西的項目會寫進清理紀錄檔，並在有沙盒權限的管理員進服時於聊天室提醒。
 [/list]
 === ❓ 常見問題
 [h3]除錯功能可以關掉嗎？[/h3]

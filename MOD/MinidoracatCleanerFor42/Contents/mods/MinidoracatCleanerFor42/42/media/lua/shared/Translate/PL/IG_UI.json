@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Owca",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Jeleń",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Indyk",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Szop"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Szop",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Czyściciel] Opcja piaskownicy '%1' ma wpisy uszkodzone lub niepasujące do niczego: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Wpisz je ponownie jako ID przedmiotów (np. Base.Nails) lub nazwy angielskie: tekst nieangielski psuje się przy każdym restarcie serwera.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Wpisz je ponownie jako klucze grup zwierząt (np. rat) lub nazwy angielskie: tekst nieangielski psuje się przy każdym restarcie serwera."
 }

@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "羊",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "鹿",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "火鸡",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "浣熊"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "浣熊",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "「清理系统」沙盒选项「%1」有已经弄坏或匹配不到任何东西的项：%2。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "请改填物品 ID（例如 Base.Nails）或英文名称：非英文字每次服务器重启都会弄坏。",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "请改填动物分组 key（例如 rat）或英文名称：非英文字每次服务器重启都会弄坏。"
 }

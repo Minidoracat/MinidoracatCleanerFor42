@@ -185,13 +185,51 @@ local function placedQuery(playerObj, args)
         { x = x, y = y, z = z, entries = Cleaner.readPlaced(x, y, z) or {} })
 end
 
+-- 字串沙盒選項的文字問題（Core.findSandboxTextIssues）。開機寫 log；client 進服時問一次，
+-- 只回給能改沙盒的人（Capability.SandboxOptions，與 Picker 的套用 gate、ISAdminPanelUI.lua:226 同一判準）。
+-- 每次問都重算：管理員在面板改好後重登就不再收到，面板存的中文值也在下次重開前先提醒。
+-- 回覆依選項分組、token 去重並跳脫（控制字元看得見）；沒有問題不回覆
+local function sandboxTextQuery(playerObj)
+    local role = playerObj:getRole()
+    if not role or not role:hasCapability(Capability.SandboxOptions) then
+        return
+    end
+    local notices, byOption, seen = {}, {}, {}
+    for _, issue in ipairs(Cleaner.findSandboxTextIssues()) do
+        local notice = byOption[issue.option]
+        if not notice then
+            notice = { option = issue.option, kind = issue.kind, tokens = {} }
+            byOption[issue.option] = notice
+            notices[#notices + 1] = notice
+        end
+        local token = Cleaner.escapeText(issue.token)
+        local key = issue.option .. "|" .. token
+        if not seen[key] then
+            seen[key] = true
+            notice.tokens[#notice.tokens + 1] = token
+        end
+    end
+    if #notices > 0 then
+        sendServerCommand(playerObj, Cleaner.COMMAND_MODULE, "sandboxText", { notices = notices })
+    end
+end
+
+local function logSandboxTextIssues()
+    for _, issue in ipairs(Cleaner.findSandboxTextIssues()) do
+        Cleaner.log("sandbox_text", "system", 0, 0, 0, "option=" .. issue.option .. " reason=" .. issue.reason
+            .. " token=" .. Cleaner.escapeText(issue.token))
+    end
+end
+
 -- 認得的 command 才進節流表：節流 key 含 command 字串，若未知 command 也先寫入，
 -- 任意偽造字串可讓 lastCommandAt 無界成長（記憶體 DoS）；table lookup 對非字串
 -- command 也安全（字串串接則會拋例外）
-local HANDLERS = { deleteItems = deleteItems, touch = touchItems, placedQuery = placedQuery }
+local HANDLERS = { deleteItems = deleteItems, touch = touchItems, placedQuery = placedQuery,
+    sandboxTextQuery = sandboxTextQuery }
 -- 各 command 的最小間隔（ms）。touch 放寬到 1000：client 端以 ≥1.1 秒間隔聚合送出
--- （Client.lua flushTouch），正常玩家不會撞到；偽造洪水觸發周遭掃描的速率則被砍到 1/s
-local MIN_INTERVAL = { deleteItems = 250, touch = 1000, placedQuery = 500 }
+-- （Client.lua flushTouch），正常玩家不會撞到；偽造洪水觸發周遭掃描的速率則被砍到 1/s。
+-- sandboxTextQuery 每次登入只送一次，對管理員要走訪全部 item script
+local MIN_INTERVAL = { deleteItems = 250, touch = 1000, placedQuery = 500, sandboxTextQuery = 10000 }
 
 local function onClientCommand(module, command, playerObj, args)
     if module ~= Cleaner.COMMAND_MODULE or not playerObj then
@@ -215,3 +253,4 @@ end
 
 -- GameServer.java:2243-2294
 Events.OnClientCommand.Add(onClientCommand)
+Events.OnServerStarted.Add(logSandboxTextIssues)

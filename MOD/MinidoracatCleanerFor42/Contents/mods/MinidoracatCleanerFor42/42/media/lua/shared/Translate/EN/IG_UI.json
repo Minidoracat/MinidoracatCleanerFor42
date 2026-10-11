@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Sheep",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Deer",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Turkey",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Raccoon"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Raccoon",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Cleaner] Sandbox option '%1' has entries that are damaged or match nothing: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Re-enter them as item IDs (e.g. Base.Nails) or English names: non-English text is damaged every time the server restarts.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Re-enter them as animal group keys (e.g. rat) or English names: non-English text is damaged every time the server restarts."
 }

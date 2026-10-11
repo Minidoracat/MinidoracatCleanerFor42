@@ -4,6 +4,19 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [Unreleased]
+
+### 新增
+
+- **多人伺服器會提醒管理員修正被損毀的清單**：這是遊戲本身的限制——多人伺服器每次重開，沙盒文字設定裡的中文等非英文字都會被損毀，原文也找不回來（例如「子彈」會變成「PH」），清單就這樣悄悄失效。現在伺服器開機時會檢查保護清單、高容忍清單、可清理動物群組與四個覆寫設定，發現損毀或比對不到任何物品、動物群組的項目，就寫進清理紀錄檔（sandbox_text）；有沙盒權限的管理員進服時，聊天室也會列出是哪個設定、哪些項目，並建議改填物品 ID（如 Base.Nails）、動物群組 key（如 rat）或英文名稱。一般玩家看不到這則提醒。
+
+### 變更
+
+- **清單裡只有 1 到 2 個字母的項目改成比對整個單字**：以前這種短項目會比中名字裡任何位置含這兩個字母的東西，損毀後剩下的「PH」就會誤保護電話（Phone）。現在只比中整個單字，例如 TV 仍然比得中電視（Base.TV）。3 個字母以上的項目與中文名稱的比對方式不變。
+- **沙盒設定說明改成建議填物品 ID、動物群組 key 或英文名稱**，並註明翻譯名稱只在單機有效。設定值本身不用改；收到上面的提醒再改即可。
+
+> 技術要點：伺服器以 Kahlua lexer 讀 `<名>_SandboxVars.lua`（`SandboxOptions.java:822`），>255 的字元截成 1 byte（`LexState.java:194-199`）後立刻整份重寫（`GameServer.java:1479-1487`）。比對規則在 `Core` 的 `tokenMatchesName`（UTF-8 不滿 3 byte 的 token 只比整個名字或 ASCII 單字；Kahlua 的 `#` 以 UTF-16 字元計，所以逐字元換算）；檢查在 `Cleaner.findSandboxTextIssues`，開機由 `OnServerStarted` 寫 log，client 進服送 `sandboxTextQuery`，server 以 `Capability.SandboxOptions` 判定後回 `sandboxText`。
+
 ## [42.21.0-0.8.0] - 2026-10-11
 
 ### 變更

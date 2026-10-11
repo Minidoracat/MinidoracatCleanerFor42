@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十四個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十五個情境並斷言結果。
 
     lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
@@ -99,6 +99,10 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
             每秒全服廣播）、不動其他 modData、原回傳值照傳
 情境四十四：沙盒清單的全形逗號分隔——真正的 U+FF0C（沙盒 UI 設定）與 SandboxVars.lua 載入後
             被 Kahlua lexer 截成的 "\f" 都要切開
+情境四十五：專用伺服器重開截壞非 ASCII 沙盒值的對策——短 token（< 3 byte）只整字比對（PH 不再比中
+            Base.Phone、tv 仍比中 Base.TV、中文 token 仍子字串比中翻譯名、動物覆寫同規則）；開機與
+            管理員進服的文字檢查報出非 ASCII（\x01、U+FFFD）與比不中任何物品／群組的 token，
+            乾淨的 ASCII 設定零回報、沒有沙盒權限的玩家收不到
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -202,6 +206,13 @@ Events = setmetatable({}, {
                 elseif name == "OnCreatePlayer" then CREATE_PLAYER_HANDLERS[#CREATE_PLAYER_HANDLERS + 1] = fn
                 elseif name == "EveryTenMinutes" then TEN_MINUTE_HANDLERS[#TEN_MINUTE_HANDLERS + 1] = fn
                 elseif name == "OnServerStarted" then SERVER_STARTED_HANDLERS[#SERVER_STARTED_HANDLERS + 1] = fn end
+            end,
+            -- 只有 OnTick 需要（Client 的 sandboxTextQuery 送出後移除自己）
+            Remove = function(fn)
+                if name ~= "OnTick" then return end
+                for i = #tickHandlers, 1, -1 do
+                    if tickHandlers[i] == fn then table.remove(tickHandlers, i) end
+                end
             end,
         }
     end,
@@ -4589,6 +4600,131 @@ check(#list44 == 4 and list44[1] == "Base.Axe" and list44[2] == "Base.Log"
     and list44[3] == "Base.Plank" and list44[4] == "Base.Nails",
     "全形逗號、截斷後的 \\f、分號都當分隔符")
 end
+
+print("情境四十五：短 token 整字比對＋字串沙盒選項的文字檢查（專用伺服器重開截壞非 ASCII）")
+-- 包成函式：main chunk 已達 200 locals 上限（檔頭 STAMP_HOUR 同註），do 區塊的 local 仍算在 main 裡
+;(function()
+local C = MinidoracatCleaner
+local realSM45, realName45, realCap45 = getScriptManager, getItemNameFromFullType, Capability
+local items45 = { "Base.Phone", "Base.TV", "Base.TV_Antique", "Base.Nails", "Base.Bullets9mm", "Base.Axe" }
+-- 伺服器語言（中文）的翻譯名
+local names45 = { ["Base.Bullets9mm"] = "9mm 子彈" }
+local scripts45 = {}
+for i, ft in ipairs(items45) do scripts45[i] = { getFullName = function() return ft end } end
+getItemNameFromFullType = function(ft) return names45[ft] or ft end
+getScriptManager = function()
+    return { FindItem = function() return nil end, getAllItems = function() return javaList(scripts45) end }
+end
+Capability = { SandboxOptions = "SandboxOptions" }
+local saved45 = {}
+for _, spec in ipairs(C.TEXT_OPTIONS) do saved45[spec.option] = sandbox[spec.option] end
+local function setLists45(values)
+    for _, spec in ipairs(C.TEXT_OPTIONS) do sandbox[spec.option] = values[spec.option] or "" end
+end
+
+-- E：短 token 只整字比對
+setLists45({ ProtectList = "PH" })
+check(not C.matchesType(C.getProtectMatcher(), "Base.Phone"), "2 字母碎片 PH（子彈截壞）不再當子字串比中 Base.Phone")
+setLists45({ ProtectList = "tv" })
+check(C.matchesType(C.getProtectMatcher(), "Base.TV"), "tv 整字比中 Base.TV 的 ASCII 單字")
+check(C.matchesType(C.getProtectMatcher(), "Base.TV_Antique"), "tv 比中名字中段的 ASCII 單字（不只整個名字）")
+setLists45({ ProtectList = "子彈" })
+check(C.matchesType(C.getProtectMatcher(), "Base.Bullets9mm"), "中文 token 仍以子字串比中翻譯名「9mm 子彈」")
+setLists45({ ProtectList = "nai" })
+check(C.matchesType(C.getProtectMatcher(), "Base.Nails"), "3 byte 以上的 ASCII token 維持子字串比對")
+setLists45({ AnimalGroupList = "at" })
+check(C.getAnimalGroupSet().rat == nil, "動物 2 字母碎片 at 不再擴成 rat 群組")
+setLists45({ AnimalLimitOverrides = "at=5,hen=3" })
+local ovr45 = C.getAnimalLimitOverrides()
+check(ovr45.rat == nil and ovr45.chicken == 3, "覆寫的群組部分同規則；種類 key hen 照舊解析成 chicken")
+
+-- B：文字檢查
+local function issues45()
+    local out = {}
+    for _, issue in ipairs(C.findSandboxTextIssues()) do
+        out[#out + 1] = issue.option .. "|" .. issue.reason .. "|" .. C.escapeText(issue.token)
+    end
+    return out
+end
+local function has45(list, s)
+    for _, v in ipairs(list) do if v == s then return true end end
+    return false
+end
+local function query45(hasCap)
+    local p = { getUsername = function() return hasCap and "admin45" or "user45" end,
+        getRole = function()
+            return { hasCapability = function(_, cap) return hasCap and cap == Capability.SandboxOptions end }
+        end }
+    local before = #sentCommands
+    for _, fn in ipairs(clientCommandHandlers) do fn("MinidoracatCleaner", "sandboxTextQuery", p, {}) end
+    nowMs = nowMs + 20000
+    return #sentCommands > before and sentCommands[#sentCommands] or nil
+end
+local function bootLog45()
+    local base = #logLines
+    for _, fn in ipairs(SERVER_STARTED_HANDLERS) do fn() end
+    local lines = {}
+    for i = base + 1, #logLines do lines[#lines + 1] = logLines[i] end
+    return lines
+end
+
+setLists45({ ProtectList = "Base.Nails,TV,phone", HighToleranceList = "bullets", AnimalGroupList = "rat,all",
+    AnimalLimitOverrides = "rat=5,chicken=0", AnimalZoneLimitOverrides = "hen=3,*=2", RanchBreedingOverrides = "pig=4" })
+check(#issues45() == 0, "乾淨的 ASCII 設定（ID、整字、英文名、種類 key、all／*）零回報")
+check(query45(true) == nil, "沒有問題時管理員也不收到提醒")
+check(#bootLog45() == 0, "沒有問題時開機不寫 log")
+
+-- 引擎實際截出來的值：子彈→PH、老鼠→\x01＋空白；U+FFFD 是 UTF-8 解不回的位元組
+setLists45({ ProtectList = "PH,Base.Nails", HighToleranceList = "Base.Axe\239\191\189",
+    AnimalGroupList = "rat,\1 ", AnimalLimitOverrides = "rat=5,zz=3" })
+local found45 = issues45()
+check(has45(found45, "ProtectList|unresolved|PH"), "PH 比不中任何物品 → 報出")
+check(has45(found45, "AnimalGroupList|nonascii|\\x01") and has45(found45, "AnimalGroupList|unresolved|\\x01"),
+    "\\x01 → 報非 ASCII 與比不中群組，跳脫後看得見")
+check(has45(found45, "HighToleranceList|nonascii|Base.Axe\\xEF\\xBF\\xBD"), "U+FFFD → 報非 ASCII")
+check(has45(found45, "AnimalLimitOverrides|unresolved|zz=3"), "覆寫群組比不中任何群組 → 報出")
+check(#found45 == 6, "Base.Nails／rat 不誤報（共 6 筆，實際 " .. #found45 .. "）")
+
+local sent45 = query45(true)
+local byOpt45 = {}
+for _, n in ipairs(sent45 and sent45.args.notices or {}) do byOpt45[n.option] = n end
+check(sent45 and sent45.command == "sandboxText", "有沙盒權限的管理員進服時收到提醒")
+check(byOpt45.ProtectList and byOpt45.ProtectList.kind == "items" and #byOpt45.ProtectList.tokens == 1
+    and byOpt45.ProtectList.tokens[1] == "PH", "提醒依選項分組、帶物品修法種類")
+check(byOpt45.AnimalGroupList and byOpt45.AnimalGroupList.kind == "animals" and #byOpt45.AnimalGroupList.tokens == 1
+    and byOpt45.AnimalGroupList.tokens[1] == "\\x01", "同一 token 的兩種問題合併成一筆、已跳脫")
+check(query45(false) == nil, "沒有沙盒權限的玩家收不到任何回覆")
+local boot45 = bootLog45()
+check(#boot45 == 6 and boot45[1]:find("[sandbox_text][system]", 1, true) ~= nil,
+    "開機每個問題一行 sandbox_text log（實際 " .. #boot45 .. " 行）")
+local escaped45 = false
+for _, line in ipairs(boot45) do
+    if line:find("option=AnimalGroupList reason=nonascii token=\\x01", 1, true) then escaped45 = true end
+end
+check(escaped45, "log 的控制字元已跳脫")
+
+-- client 發問時機：MP 的 OnGameStart 早於 sendPlayerConnect，當下送伺服器收不到（家族 pitfalls.md）。
+-- OnGameStart 只排程，首個 OnTick 送一次後移除自己
+local realIsClient45, realSCC45 = isClient, sendClientCommand
+local asked45 = {}
+isClient = function() return true end
+sendClientCommand = function(_, module, command) asked45[#asked45 + 1] = module .. "." .. command end
+local ticksBefore45 = #tickHandlers
+for _, fn in ipairs(GAME_START_HANDLERS) do fn() end
+check(#asked45 == 0, "OnGameStart 當下不送 sandboxTextQuery")
+-- 跑本輪新掛的 tick（OnGameStart 同時讓 Client 的 touch 回報掛上 flushTouch，空緩衝時是 no-op）；
+-- 每個 tick 重讀清單，移除自己之後就不該再被呼叫
+local added45 = #tickHandlers - ticksBefore45
+for _ = 1, 3 do
+    for i = #tickHandlers, ticksBefore45 + 1, -1 do tickHandlers[i]() end
+end
+check(#asked45 == 1 and asked45[1] == "MinidoracatCleaner.sandboxTextQuery"
+    and #tickHandlers == ticksBefore45 + added45 - 1, "首個 OnTick 送一次 sandboxTextQuery，之後移除自己")
+isClient, sendClientCommand = realIsClient45, realSCC45
+
+for _, spec in ipairs(C.TEXT_OPTIONS) do sandbox[spec.option] = saved45[spec.option] end
+getScriptManager, getItemNameFromFullType, Capability = realSM45, realName45, realCap45
+end)()
 if failures > 0 then
     print(failures .. " 項失敗")
     os.exit(1)

@@ -144,6 +144,39 @@ function Cleaner.showCleaned(playerObj, payload)
     end
 end
 
+-- 字串沙盒選項的文字問題（server 只回給有沙盒權限的人，見 Commands.lua sandboxTextQuery）：
+-- 每個選項一行紅字，選項名用沙盒頁的翻譯、token 已由 server 跳脫
+function Cleaner.showSandboxTextNotice(payload)
+    if type(payload) ~= "table" or type(payload.notices) ~= "table" then
+        return
+    end
+    for _, notice in ipairs(payload.notices) do
+        local label = getText("Sandbox_MinidoracatCleanerFor42_" .. tostring(notice.option))
+        local tokens = type(notice.tokens) == "table" and table.concat(notice.tokens, ", ") or ""
+        local fixKey = notice.kind == "items" and "IGUI_MinidoracatCleaner_SandboxTextFixItems"
+            or "IGUI_MinidoracatCleaner_SandboxTextFixAnimals"
+        addChatLine(getText("IGUI_MinidoracatCleaner_SandboxTextIssue", label, tokens) .. " " .. getText(fixKey))
+    end
+end
+
+-- 進服後問一次（MP 才有專用伺服器的截壞問題；SP 不送）。不能在 OnGameStart 當下送：MP 那時還沒
+-- sendPlayerConnect，sendClientCommand 會走 SinglePlayerClient、伺服器收不到（IngameState.java:762-775、
+-- LuaManager.java:8912-8924；家族 pitfalls.md），所以等首個有玩家的 OnTick
+local function requestSandboxTextNotice()
+    local playerObj = getPlayer()
+    if not playerObj then
+        return
+    end
+    Events.OnTick.Remove(requestSandboxTextNotice)
+    sendClientCommand(playerObj, Cleaner.COMMAND_MODULE, "sandboxTextQuery", {})
+end
+
+local function scheduleSandboxTextNotice()
+    if isClient() then
+        Events.OnTick.Add(requestSandboxTextNotice)
+    end
+end
+
 -- ===== MP client 端「最後操作者」回報 =====
 -- B42 的一般容器對容器轉移在 MP 是 client 發起交易、server 純 Java 執行
 -- （createItemTransaction，ISInventoryTransferAction.lua:313；Transaction.java:294,301），
@@ -339,9 +372,12 @@ local function onServerCommand(module, command, args)
         applyTouchAck(args)
     elseif command == "placedInfo" and Cleaner.showPlacedInfo then
         Cleaner.showPlacedInfo(args)
+    elseif command == "sandboxText" then
+        Cleaner.showSandboxTextNotice(args)
     end
 end
 
 Events.OnServerCommand.Add(onServerCommand)
 Events.OnGameStart.Add(installTouchReporters)
 Events.OnCreatePlayer.Add(installTouchReporters)
+Events.OnGameStart.Add(scheduleSandboxTextNotice)

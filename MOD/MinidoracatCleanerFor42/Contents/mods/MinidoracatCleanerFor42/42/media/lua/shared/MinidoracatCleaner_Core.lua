@@ -248,7 +248,7 @@ function Cleaner.buildLimitToken(group, rawValue)
 end
 
 -- 關鍵字清單：token 對「fullType／點號後段／英文 DisplayName／伺服器語言翻譯名」做
--- 不分大小寫子字串比對。翻譯名依伺服器端語言（GameServer.java:595 有 loadFiles；
+-- 不分大小寫比對（規則見 tokenMatchesName）。翻譯名依伺服器端語言（GameServer.java:595 有 loadFiles；
 -- getItemNameFromFullType＝LuaManager.java:8579）
 function Cleaner.getKeywordMatcher(optionName)
     local tokens = {}
@@ -264,6 +264,39 @@ end
 
 function Cleaner.getHighToleranceMatcher()
     return Cleaner.getKeywordMatcher("HighToleranceList")
+end
+
+-- token 的 UTF-8 位元組數是否 < 3。Kahlua 的 `#` 與 string.byte 以 UTF-16 字元計
+-- （KahluaThread.java:435-436、StringLib.java:720-750：中文一字算 1），所以逐字元換算；
+-- 標準 Lua（harness）逐 byte 算，非 ASCII byte 各算 2，中日韓字照樣 >= 3。
+local function isShortToken(token)
+    local bytes = 0
+    for i = 1, #token do
+        local c = string.byte(token, i)
+        bytes = bytes + (c < 128 and 1 or c < 2048 and 2 or 3)
+        if bytes >= 3 then
+            return false
+        end
+    end
+    return true
+end
+
+-- token 與名字都已轉小寫。>= 3 byte 的 token（含每個中日韓字）做子字串比對；更短的只比整個名字
+-- 或名字裡的 ASCII 單字（Base.TV → base、tv）：專用伺服器重開會把中文值截成 2 字母碎片
+-- （「子彈」→ "PH"），當子字串會比中 Base.Phone 這類不相干的東西
+local function tokenMatchesName(token, name)
+    if not isShortToken(token) then
+        return string.find(name, token, 1, true) ~= nil
+    end
+    if name == token then
+        return true
+    end
+    for word in string.gmatch(name, "[0-9a-z]+") do
+        if word == token then
+            return true
+        end
+    end
+    return false
 end
 
 local function itemMatchNames(fullType)
@@ -298,7 +331,7 @@ function Cleaner.matchesType(matcher, fullType)
     local names = itemMatchNames(fullType)
     for _, token in ipairs(matcher.tokens) do
         for _, name in ipairs(names) do
-            if string.find(name, token, 1, true) then
+            if tokenMatchesName(token, name) then
                 result = true
                 break
             end
@@ -359,20 +392,21 @@ local function buildAnimalNameIndex()
     return index
 end
 
--- token 解析為 group key：先精確比對 group/type key（避免子字串誤擴），再對翻譯名做子字串比對
+-- token 解析為 group key：先精確比對 group/type key（避免子字串誤擴），再對翻譯名比對（tokenMatchesName）。
+-- 回傳是否解析到 AnimalDefinitions 的群組（開機檢查用）
 local function resolveAnimalGroups(token, index, result)
     token = string.lower(trim(token))
     if token == "" then
-        return
+        return true
     end
     if index[token] then
         result[token] = true
-        return
+        return true
     end
     local matched = false
     for group, names in pairs(index) do
         for _, name in ipairs(names) do
-            if name == token or string.find(name, token, 1, true) then
+            if tokenMatchesName(token, name) then
                 result[group] = true
                 matched = true
                 break
@@ -383,6 +417,7 @@ local function resolveAnimalGroups(token, index, result)
         -- 未知 token（可能是其他 MOD 動物的 group key）：原樣保留，fail-closed 語意不變
         result[token] = true
     end
+    return matched
 end
 
 function Cleaner.getAnimalGroupSet()
@@ -408,6 +443,9 @@ function Cleaner.getAnimalGroupSet()
     return result
 end
 
+-- 覆寫 token：group=非負整數
+local LIMIT_ENTRY = "^%s*([^=]+)%s*=%s*(%d+)%s*$"
+
 local function parseGroupLimits(optionName)
     local result = {}
     local entries = Cleaner.parseList(Cleaner.getOption(optionName))
@@ -417,7 +455,7 @@ local function parseGroupLimits(optionName)
     end
     local index = buildAnimalNameIndex()
     for _, entry in ipairs(entries) do
-        local group, value = entry:match("^%s*([^=]+)%s*=%s*(%d+)%s*$")
+        local group, value = entry:match(LIMIT_ENTRY)
         value = tonumber(value)
         if group and value and value >= 0 then
             local resolved = {}
@@ -448,6 +486,99 @@ end
 -- 繁殖上限的逐群組覆寫（0＝該群組不做繁殖抑制；同清除側的 0 語意）
 function Cleaner.getRanchBreedingOverrides()
     return parseGroupLimits("RanchBreedingOverrides")
+end
+
+-- ============ 字串沙盒選項的文字檢查（server 開機與管理員登入時跑，見 Commands.lua） ============
+-- 專用伺服器開機以 Kahlua lexer 讀 <名>_SandboxVars.lua（SandboxOptions.java:822），>255 的字元截成
+-- 1 byte（LexState.java:194-199）後立刻整份重寫（GameServer.java:1479-1487）：非 ASCII 值第一次重開
+-- 就被截壞、原文永久遺失（「子彈」→ "PH"）。引擎行為改不了，只能提醒管理員改填 ASCII。
+-- kind 決定給管理員的修法提示；limits＝group=數字 的覆寫格式
+Cleaner.TEXT_OPTIONS = {
+    { option = "ProtectList", kind = "items" },
+    { option = "HighToleranceList", kind = "items" },
+    { option = "AnimalGroupList", kind = "animals" },
+    { option = "AnimalLimitOverrides", kind = "animals", limits = true },
+    { option = "AnimalGlobalLimitOverrides", kind = "animals", limits = true },
+    { option = "AnimalZoneLimitOverrides", kind = "animals", limits = true },
+    { option = "RanchBreedingOverrides", kind = "animals", limits = true },
+}
+
+-- 可見 ASCII（0x20-0x7E）與 tab、\f 以外的字元都算（\f 是全形逗號截壞後的樣子，parseList 當分隔符）
+local function isPrintableAscii(text)
+    for i = 1, #text do
+        local c = string.byte(text, i)
+        if (c < 32 or c > 126) and c ~= 9 and c ~= 12 then
+            return false
+        end
+    end
+    return true
+end
+
+-- log 與通知用：可見 ASCII 原樣，其餘寫成 \xNN（Kahlua 的 >255 字元寫成 \xFFFD 這種四位）
+function Cleaner.escapeText(text)
+    local parts = {}
+    for i = 1, #text do
+        local c = string.byte(text, i)
+        parts[#parts + 1] = (c >= 32 and c <= 126) and string.sub(text, i, i) or string.format("\\x%02X", c)
+    end
+    return table.concat(parts)
+end
+
+-- 回傳 { { option, kind, reason = "nonascii"|"unresolved", token } ... }。unresolved＝照 matchesType／
+-- resolveAnimalGroups 的規則比不中任何物品 script／AnimalDefinitions 群組（* 與 all 除外）。
+-- ponytail: 物品 token 要走訪全部 item script（數千個，各做一次 itemMatchNames），只在開機與管理員登入時跑
+function Cleaner.findSandboxTextIssues()
+    local issues, itemTokens = {}, {}
+    local index = nil
+    for _, spec in ipairs(Cleaner.TEXT_OPTIONS) do
+        for _, token in ipairs(Cleaner.parseList(Cleaner.getOption(spec.option))) do
+            if not isPrintableAscii(token) then
+                issues[#issues + 1] = { option = spec.option, kind = spec.kind, reason = "nonascii", token = token }
+            end
+            if spec.kind == "items" then
+                itemTokens[#itemTokens + 1] = { spec = spec, token = token, lower = string.lower(token) }
+            else
+                local group = token
+                if spec.limits then
+                    group = token:match(LIMIT_ENTRY)
+                end
+                group = group and string.lower(trim(group))
+                if group and group ~= "*" and group ~= "all" then
+                    index = index or buildAnimalNameIndex()
+                    if not resolveAnimalGroups(group, index, {}) then
+                        issues[#issues + 1] = { option = spec.option, kind = spec.kind, reason = "unresolved", token = token }
+                    end
+                end
+            end
+        end
+    end
+    local left = #itemTokens
+    if left > 0 then
+        local scripts = getScriptManager():getAllItems()
+        for i = 0, scripts:size() - 1 do
+            local names = itemMatchNames(scripts:get(i):getFullName())
+            for _, entry in ipairs(itemTokens) do
+                if not entry.hit then
+                    for _, name in ipairs(names) do
+                        if tokenMatchesName(entry.lower, name) then
+                            entry.hit = true
+                            left = left - 1
+                            break
+                        end
+                    end
+                end
+            end
+            if left == 0 then
+                break
+            end
+        end
+        for _, entry in ipairs(itemTokens) do
+            if not entry.hit then
+                issues[#issues + 1] = { option = entry.spec.option, kind = "items", reason = "unresolved", token = entry.token }
+            end
+        end
+    end
+    return issues
 end
 
 function Cleaner.sanitize(value)

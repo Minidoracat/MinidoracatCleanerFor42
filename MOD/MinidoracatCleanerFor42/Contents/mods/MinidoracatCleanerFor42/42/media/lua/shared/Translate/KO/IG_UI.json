@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "양",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "사슴",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "칠면조",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "너구리"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "너구리",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[클리너] 샌드박스 옵션 '%1'에 망가졌거나 아무것도 일치하지 않는 항목이 있습니다: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "아이템 ID(예: Base.Nails)나 영어 이름으로 다시 입력하세요. 영어가 아닌 글자는 서버를 재시작할 때마다 망가집니다.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "동물 그룹 키(예: rat)나 영어 이름으로 다시 입력하세요. 영어가 아닌 글자는 서버를 재시작할 때마다 망가집니다."
 }

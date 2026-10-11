@@ -45,5 +45,8 @@
   "IGUI_MinidoracatCleaner_AnimalGroup_sheep": "Koyun",
   "IGUI_MinidoracatCleaner_AnimalGroup_deer": "Geyik",
   "IGUI_MinidoracatCleaner_AnimalGroup_turkey": "Hindi",
-  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Rakun"
+  "IGUI_MinidoracatCleaner_AnimalGroup_raccoon": "Rakun",
+  "IGUI_MinidoracatCleaner_SandboxTextIssue": "[Temizleyici] '%1' sandbox seçeneğinde bozulmuş ya da hiçbir şeyle eşleşmeyen girdiler var: %2.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixItems": "Bunları eşya kimliği (örn. Base.Nails) veya İngilizce ad olarak yeniden girin: İngilizce olmayan metin her sunucu yeniden başlatmasında bozulur.",
+  "IGUI_MinidoracatCleaner_SandboxTextFixAnimals": "Bunları hayvan grubu anahtarı (örn. rat) veya İngilizce ad olarak yeniden girin: İngilizce olmayan metin her sunucu yeniden başlatmasında bozulur."
 }
