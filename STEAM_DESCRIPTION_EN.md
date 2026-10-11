@@ -1,4 +1,4 @@
-[h1]🧹 Minidoracat Cleaner for B42[/h1]
+[h1]🧹 Minidoracat Cleaner[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]
@@ -7,7 +7,7 @@ Sanitation service for the apocalypse: right-click to delete items from any cont
 
 [h2]📦 Requirements[/h2]
 [list]
-[*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url], on both server and clients
+[*] Required: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url], on both server and clients
 [*] Build 42 only, singleplayer and multiplayer; servers must enable it
 [*] [b]Add/remove mid-save:[/b] safe either way
 [*] [b]Languages:[/b] 繁體中文, 简体中文, English, 日本語, 한국어, Русский, Español, Português, Türkçe, Français, Polski, Deutsch (please report any translation issues)

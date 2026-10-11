@@ -1,4 +1,4 @@
-[h1]🧹 Minidoracat Cleaner for B42[/h1]
+[h1]🧹 Minidoracat Cleaner[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]
@@ -7,7 +7,7 @@
 
 [h2]📦 必要なもの[/h2]
 [list]
-[*] 必須：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library for B42[/url]。サーバーとクライアント両方に導入してください
+[*] 必須：[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]。サーバーとクライアント両方に導入してください
 [*] Build 42 専用、シングル・マルチ両対応です。マルチはサーバー側での有効化が必要です
 [*] [b]途中追加・削除：[/b]どちらも可能
 [*] [b]対応言語：[/b]繁體中文、简体中文、English、日本語、한국어、Русский、Español、Português、Türkçe、Français、Polski、Deutsch（翻訳の問題はお知らせください）

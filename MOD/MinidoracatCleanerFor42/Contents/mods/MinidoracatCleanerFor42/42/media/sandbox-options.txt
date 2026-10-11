@@ -1,6 +1,6 @@
 VERSION = 1,
 
-/* Minidoracat Cleaner for B42 — 三分頁：一般 / 物品 / 動物；選項 ID 不變，僅分頁與排序 */
+/* Minidoracat Cleaner — 三分頁：一般 / 物品 / 動物；選項 ID 不變，僅分頁與排序 */
 
 /* ============ 一般 ============ */
 

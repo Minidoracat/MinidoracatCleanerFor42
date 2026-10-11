@@ -1,4 +1,4 @@
-# Minidoracat Cleaner for B42
+# Minidoracat Cleaner
 
 所有容器皆可刪除垃圾；自動清理範圍內過量的地板重複物品與動物
 
@@ -19,7 +19,7 @@ Project Zomboid Build 42 MOD。
 
 ## 安裝
 
-- Steam Workshop：[Minidoracat Cleaner for B42](https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349)
+- Steam Workshop：[Minidoracat Cleaner](https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349)
 - 手動安裝：把 `MOD/MinidoracatCleanerFor42/Contents/mods/MinidoracatCleanerFor42` 複製到 `%USERPROFILE%\Zomboid\mods\` 並將資料夾改名為 `MinidoracatCleanerFor42`
 
 ## 開發
