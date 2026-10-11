@@ -269,11 +269,9 @@ local function inspectCandidate(job, plan, candidate, zoneCache, players, radius
     if not animal then
         return "gone"
     end
-    -- 已經被別的 job 刪掉了。**不能靠引擎狀態判斷**：`animal:remove()` 走
-    -- delete() → removeFromSquare()，而 IsoMovingObject 只清 current/last
-    -- （IsoMovingObject.java:705）、IsoObject 只把自己從 square 的清單移除
-    -- （IsoObject.java:4539-4544）——**兩者都不清 this.square 欄位**，所以
-    -- getSquare() 在移除後仍回原 square，isDead() 也不會變 true。
+    -- 已經被別的 job 刪掉了。**不能靠引擎狀態判斷**：`animal:remove()` 之後 isDead()
+    -- 仍是 false；getSquare() 在 42.20 仍回原 square（IsoObject.removeFromSquare 不清
+    -- this.square 欄位），42.21 起 delete() 才 setSquare(null)，兩版行為不同不能當判準。
     -- 判準只能是我們自己蓋的旗標。它天然共享：全域桶與 per-player 桶刻意持有
     -- 同一張 candidate table，第一個 job 標記完第二個就立刻看得到
     if candidate.removed then

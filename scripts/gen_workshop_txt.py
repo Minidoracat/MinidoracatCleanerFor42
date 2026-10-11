@@ -16,7 +16,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "STEAM_DESCRIPTION_EN.md")
 DST = os.path.join(REPO, "MOD", "MinidoracatCleanerFor42", "workshop.txt")
 
-TITLE = "Minidoracat Cleaner for B42"
+TITLE = "[B42] Minidoracat Cleaner"
 TAGS = "Build 42;Interface;Items;Multiplayer"
 VISIBILITY = "public"
 

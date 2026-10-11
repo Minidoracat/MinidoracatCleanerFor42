@@ -1,6 +1,6 @@
 version=1
 id=3779823349
-title=Minidoracat Cleaner for B42
+title=[B42] Minidoracat Cleaner
 description=[h1]🧹 Minidoracat Cleaner for B42[/h1]
 description=[h3]By Minidoracat[/h3]
 description=
