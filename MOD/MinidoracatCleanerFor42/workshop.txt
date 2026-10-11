@@ -1,6 +1,6 @@
 version=1
 id=3779823349
-title=[B42] Minidoracat Cleaner
+title=[B42] Cleaner by Minidoracat
 description=[h1]🧹 Minidoracat Cleaner[/h1]
 description=[h3]By Minidoracat[/h3]
 description=
