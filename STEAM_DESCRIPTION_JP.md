@@ -31,7 +31,7 @@
 [*] [b]誰がやったか分かる[/b]：アイテムを捨てた人、家具を置いた人を確認できます
 [*] [b]整理ログ[/b]：警告と整理をすべて記録します
 [/list]
-📖 [b]機能の詳細・サンドボックス設定・よくある質問：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095568/]Cleaner Guide: Features, Settings & FAQ[/url]（英語）
+📖 [b]機能の詳細・サンドボックス設定・よくある質問：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817857742]Cleaner Mod Guide: Features, Settings & FAQ[/url]（英語）
 
 [h2]🔗 Minidoracat の MOD 一覧[/h2]
 すべての MOD を[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全シリーズ コレクション[/url]にまとめています。必要なものを選んでサブスクライブしてください。

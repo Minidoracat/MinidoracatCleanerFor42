@@ -31,7 +31,7 @@
 [*] [b]查得到是誰[/b]：看得到物品誰丟的、家具誰放的
 [*] [b]清理紀錄檔[/b]：每次警告與清理都有紀錄可查
 [/list]
-📖 [b]功能細節、沙盒選項與常見問題：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095548/]Cleaner 完整說明：功能、設定與常見問題[/url]
+📖 [b]功能細節、沙盒選項與常見問題：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817857645]清潔隊 Cleaner MOD 完整說明[/url]
 
 [h2]🔗 Minidoracat 全系列[/h2]
 其他作品都在[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全系列收藏[/url]，依需求自選訂閱。

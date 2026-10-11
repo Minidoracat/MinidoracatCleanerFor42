@@ -31,7 +31,7 @@ Sanitation service for the apocalypse: right-click to delete items from any cont
 [*] [b]See who did it[/b]: who dropped an item, who placed furniture
 [*] [b]Cleanup log[/b]: every warning and cleanup is recorded
 [/list]
-📖 [b]Details, sandbox options and FAQ:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3779823349/586187095760095568/]Cleaner Guide: Features, Settings & FAQ[/url]
+📖 [b]Details, sandbox options and FAQ:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817857742]Cleaner Mod Guide: Features, Settings & FAQ[/url]
 
 [h2]🔗 More Minidoracat mods[/h2]
 All my mods are in the [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat Mods for B42 collection[/url] — pick what you need.
