@@ -1,0 +1,4 @@
+# 逐一查證後豁免的 finding（每行一個子字串樣式）。新增條目前必須先查證，並在上一行註明依據。
+
+# 待修，不是合理例外：挑選器會出現車輛零件；改用 getItemName 後刪掉這行（cleaner-dev 待辦有記）
+getItemNameFromFullType in client/MinidoracatCleaner_Picker.lua:
