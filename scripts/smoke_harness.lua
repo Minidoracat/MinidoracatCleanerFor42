@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十五個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十六個情境並斷言結果。
 
     lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
@@ -103,6 +103,9 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
             Base.Phone、tv 仍比中 Base.TV、中文 token 仍子字串比中翻譯名、動物覆寫同規則）；開機與
             管理員進服的文字檢查報出非 ASCII（\x01、U+FFFD）與比不中任何物品／群組的 token，
             乾淨的 ASCII 設定零回報、沒有沙盒權限的玩家收不到
+情境四十六：動物清單選項的解析快取——農場治理每 tick 都讀圈養覆寫與群組清單，沙盒值沒變就
+            不重解析（五個讀取函式各自釘住）；執行期改值後下一輪照新值；名稱索引還沒建成時
+            算出的結果不快取（否則種類 key 與翻譯名會凍成原樣 token）
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -4724,6 +4727,111 @@ isClient, sendClientCommand = realIsClient45, realSCC45
 
 for _, spec in ipairs(C.TEXT_OPTIONS) do sandbox[spec.option] = saved45[spec.option] end
 getScriptManager, getItemNameFromFullType, Capability = realSM45, realName45, realCap45
+end)()
+
+print()
+print("情境四十六：動物清單選項的解析快取（農場治理每 tick 都讀圈養覆寫與群組清單）")
+-- 包成函式：main chunk 已達 200 locals 上限（同情境四十五）
+;(function()
+local C = MinidoracatCleaner
+onlineRoster = { player }
+sandbox.AnimalCleanupEnabled = true
+sandbox.AnimalScanIntervalSeconds = 0
+-- 共用預設 0：只有覆寫能武裝農場清除，農場被清到覆寫的上限，就證明快取的結果真的被用到。
+-- 值都用種類 key（sow→pig、doe→deer），走名稱索引那條路
+sandbox.MaxZoneAnimalsPerGroup = 0
+local options46 = {
+    AnimalGroupList = "sow",
+    AnimalZoneLimitOverrides = "sow=3",
+    AnimalLimitOverrides = "doe=50",
+    AnimalGlobalLimitOverrides = "doe=60",
+    RanchBreedingOverrides = "sow=40",
+}
+for option, value in pairs(options46) do sandbox[option] = value end
+ANIMAL_ROSTER = {}
+resetAnimalWarned()
+local farm46 = makeTestZone({ id = 191, animals = {} })
+for i = 1, 5 do
+    farm46._opts.animals[i] = makeTestAnimal({ id = 7900 + i, atype = "sow", x = 100, y = 100 })
+end
+ANIMAL_ZONES = { farm46 }
+local function alive46()
+    local n = 0
+    for _, animal in ipairs(farm46._opts.animals) do
+        if not animal.isGone() then n = n + 1 end
+    end
+    return n
+end
+
+-- 量尺：只數這五個選項目前值的解析（WorldScanner 的刪除佇列也會 parseList 物品清單，不能算進來），
+-- 另外數五個讀取函式各被呼叫幾次（活性：沒被呼叫的話「不重解析」是空轉）
+local getters46 = {
+    AnimalGroupList = "getAnimalGroupSet",
+    AnimalZoneLimitOverrides = "getAnimalZoneLimitOverrides",
+    AnimalLimitOverrides = "getAnimalLimitOverrides",
+    AnimalGlobalLimitOverrides = "getAnimalGlobalLimitOverrides",
+    RanchBreedingOverrides = "getRanchBreedingOverrides",
+}
+local real46, asked46, parses46 = { parseList = C.parseList }, {}, 0
+C.parseList = function(value, ...)
+    for option in pairs(getters46) do
+        if value == sandbox[option] then
+            parses46 = parses46 + 1
+            break
+        end
+    end
+    return real46.parseList(value, ...)
+end
+for _, getter in pairs(getters46) do
+    real46[getter] = C[getter]
+    C[getter] = function()
+        asked46[getter] = (asked46[getter] or 0) + 1
+        return real46[getter]()
+    end
+end
+
+-- 暖機：新設的值各解析一次（繁殖覆寫只在 EveryTenMinutes 與抑制輪才讀）
+fireTenMinutes()
+runTicks(1)
+check(parses46 > 0, "前提：量尺攔得到解析（首個 tick 解析新設的值，實際 " .. parses46 .. " 次）")
+parses46, asked46 = 0, {}
+fireTenMinutes()
+runTicks(10)
+local askedAll46 = (asked46.getAnimalZoneLimitOverrides or 0) >= 10
+for _, getter in pairs(getters46) do
+    if not asked46[getter] then askedAll46 = false end
+end
+check(askedAll46, "前提：五個讀取函式這 10 個 tick 都有被呼叫（圈養覆寫每 tick 都讀）")
+check(alive46() == 3, "覆寫 sow=3 照常生效：農場清到 3 隻（實際 " .. alive46() .. "）")
+check(parses46 == 0, "沙盒值沒變，之後的 tick 一次都不重解析（實際 " .. parses46 .. " 次）")
+
+sandbox.AnimalZoneLimitOverrides = "sow=2"
+parses46 = 0
+runTicks(5)
+check(alive46() == 2, "執行期改成 sow=2，下一輪就照新上限清（實際剩 " .. alive46() .. "）")
+check(parses46 == 1, "改值後只重解析改到的那個選項一次（實際 " .. parses46 .. " 次）")
+for name, fn in pairs(real46) do C[name] = fn end
+
+-- 名稱索引還沒建成（AnimalDefinitions 還沒載入）時算出的結果不快取。索引快取是 Core 模組內的
+-- local，所以另載一份 Core，載入與第一次讀取時 AnimalDefinitions 是空的
+local realCleaner46, realDefs46 = MinidoracatCleaner, AnimalDefinitions
+MinidoracatCleaner, AnimalDefinitions = nil, { animals = {} }
+loadfile(MEDIA .. "/shared/MinidoracatCleaner_Core.lua")()
+local fresh46 = MinidoracatCleaner
+MinidoracatCleaner = realCleaner46
+sandbox.AnimalZoneLimitOverrides = "sow=4"
+local early46 = fresh46.getAnimalZoneLimitOverrides()
+AnimalDefinitions = realDefs46
+local late46 = fresh46.getAnimalZoneLimitOverrides()
+check(early46.sow == 4 and late46.pig == 4 and late46.sow == nil,
+    "索引沒建成時的結果不快取：AnimalDefinitions 載入後，同一個值重新解析成 pig")
+
+ANIMAL_ZONES = {}
+ANIMAL_ROSTER = nil
+for option in pairs(options46) do sandbox[option] = nil end
+sandbox.AnimalCleanupEnabled = nil
+sandbox.AnimalScanIntervalSeconds = nil
+sandbox.MaxZoneAnimalsPerGroup = nil
 end)()
 if failures > 0 then
     print(failures .. " 項失敗")

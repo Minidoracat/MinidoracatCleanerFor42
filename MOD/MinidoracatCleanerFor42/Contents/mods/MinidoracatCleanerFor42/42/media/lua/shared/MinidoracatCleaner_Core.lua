@@ -420,10 +420,30 @@ local function resolveAnimalGroups(token, index, result)
     return matched
 end
 
-function Cleaner.getAnimalGroupSet()
+-- 動物清單選項的解析結果，依「選項名＋原始字串」快取。農場治理每 tick 都讀圈養覆寫與群組清單
+-- （AnimalBreeding 的 Cleaner.ranchTick），沙盒值沒變就不重解析；管理員執行期改值後字串不同，
+-- 下次讀就重解析。回傳的 table 由所有呼叫端共用，只能讀不能改
+local parsedAnimalOptions = {}
+
+-- parse(raw) 回傳（結果, 有沒有查名稱索引）。查了索引、索引卻還沒建成（AnimalDefinitions 未載入）
+-- 時不存：種類 key、翻譯名會被當成未知 token 原樣保留，存了就一直錯到管理員改值
+local function parseAnimalOption(optionName, parse)
+    local raw = Cleaner.getOption(optionName)
+    local cached = parsedAnimalOptions[optionName]
+    if cached and cached.raw == raw then
+        return cached.result
+    end
+    local result, usedIndex = parse(raw)
+    if not usedIndex or animalNameIndex then
+        parsedAnimalOptions[optionName] = { raw = raw, result = result }
+    end
+    return result
+end
+
+local function parseGroupSet(raw)
     local result = {}
     local defaults = { "rat", "mouse", "rabbit", "chicken" }
-    local tokens = Cleaner.parseList(Cleaner.getOption("AnimalGroupList"), defaults)
+    local tokens = Cleaner.parseList(raw, defaults)
     -- 特殊 token：* 或 all（不分大小寫）＝允許 AnimalDefinitions 裡每一個 group。
     -- 用 _allowAll sentinel，而不是把 index 的 key 抄進 set：
     --   ① 掃描端對未知／未來 MOD group 仍放行（group 字串來自 getDef，不必預先列舉）
@@ -433,25 +453,29 @@ function Cleaner.getAnimalGroupSet()
         local lower = string.lower(trim(token))
         if lower == "*" or lower == "all" then
             result._allowAll = true
-            return result
+            return result, false
         end
     end
     local index = buildAnimalNameIndex()
     for _, token in ipairs(tokens) do
         resolveAnimalGroups(token, index, result)
     end
-    return result
+    return result, true
+end
+
+function Cleaner.getAnimalGroupSet()
+    return parseAnimalOption("AnimalGroupList", parseGroupSet)
 end
 
 -- 覆寫 token：group=非負整數
 local LIMIT_ENTRY = "^%s*([^=]+)%s*=%s*(%d+)%s*$"
 
-local function parseGroupLimits(optionName)
+local function parseGroupLimits(raw)
     local result = {}
-    local entries = Cleaner.parseList(Cleaner.getOption(optionName))
+    local entries = Cleaner.parseList(raw)
     -- 覆寫選項留空是常態，此時完全不必碰名稱索引
     if #entries == 0 then
-        return result
+        return result, false
     end
     local index = buildAnimalNameIndex()
     for _, entry in ipairs(entries) do
@@ -465,27 +489,27 @@ local function parseGroupLimits(optionName)
             end
         end
     end
-    return result
+    return result, true
 end
 
 -- 散養上限的逐群組覆寫
 function Cleaner.getAnimalLimitOverrides()
-    return parseGroupLimits("AnimalLimitOverrides")
+    return parseAnimalOption("AnimalLimitOverrides", parseGroupLimits)
 end
 
 -- 圈養上限的逐群組覆寫（0＝該群組圈養永不清理）
 function Cleaner.getAnimalZoneLimitOverrides()
-    return parseGroupLimits("AnimalZoneLimitOverrides")
+    return parseAnimalOption("AnimalZoneLimitOverrides", parseGroupLimits)
 end
 
 -- 全域散養上限的逐群組覆寫（0＝該群組不受全域上限約束）
 function Cleaner.getAnimalGlobalLimitOverrides()
-    return parseGroupLimits("AnimalGlobalLimitOverrides")
+    return parseAnimalOption("AnimalGlobalLimitOverrides", parseGroupLimits)
 end
 
 -- 繁殖上限的逐群組覆寫（0＝該群組不做繁殖抑制；同清除側的 0 語意）
 function Cleaner.getRanchBreedingOverrides()
-    return parseGroupLimits("RanchBreedingOverrides")
+    return parseAnimalOption("RanchBreedingOverrides", parseGroupLimits)
 end
 
 -- ============ 字串沙盒選項的文字檢查（server 開機與管理員登入時跑，見 Commands.lua） ============
