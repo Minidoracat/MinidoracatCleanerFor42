@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "還有 %1 種，共 %2 件（容器裡另有 %3 件，一起刪除）",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "選取的東西裡有已裝入的膠囊或帕魯球，下一步會再確認。",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "有袋子裡的東西太多沒檢查完，下一步會再確認。",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "一次最多刪 %1 件：另外 %2 件這次不會刪除。",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "不會刪除 %1 件：最愛或裝備中的物品。",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "刪除後無法復原。",
   "IGUI_MinidoracatCleaner_ConfirmButton": "刪除 %1 件",

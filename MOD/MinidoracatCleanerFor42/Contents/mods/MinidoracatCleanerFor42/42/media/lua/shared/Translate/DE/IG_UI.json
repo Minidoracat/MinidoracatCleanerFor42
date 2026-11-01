@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "Weitere Arten: %1, Gegenstände insgesamt: %2 (zusätzlich in Behältern: %3 Gegenstände; der Inhalt wird ebenfalls gelöscht)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "Die Auswahl enthält beladene Kapseln oder Pal-Sphären. Das Löschen bestätigst du im nächsten Schritt noch einmal.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Eine Tasche enthält zu viele Gegenstände, um sie vollständig zu prüfen. Das Löschen bestätigst du im nächsten Schritt noch einmal.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "Höchstens %1 Gegenstände pro Löschvorgang: %2 weitere werden diesmal nicht gelöscht.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Nicht gelöscht (%1): Favoriten oder ausgerüstete Gegenstände.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Das kann nicht rückgängig gemacht werden.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Löschen (%1)",

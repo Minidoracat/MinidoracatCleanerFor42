@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "%1 tür daha, toplam %2 eşya (kaplardaki %3 eşya da silinir)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "Seçimde dolu kapsül ya da Pal Küresi var. Bunları bir sonraki adımda onaylayacaksınız.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Bir çantada kontrol edilemeyecek kadar çok eşya var. Bir sonraki adımda onaylayacaksınız.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "Tek seferde en fazla %1 eşya silinir: kalan %2 eşya bu sefer silinmez.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Silinmeyecek (%1): favori ya da kuşanılmış eşyalar.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Bu işlem geri alınamaz.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Sil (%1)",

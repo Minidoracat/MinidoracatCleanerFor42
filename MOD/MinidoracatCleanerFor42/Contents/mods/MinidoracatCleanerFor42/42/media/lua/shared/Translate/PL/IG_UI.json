@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "Pozostałe rodzaje: %1, przedmioty łącznie: %2 (w pojemnikach jeszcze: %3, też zostaną usunięte)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "Zaznaczenie obejmuje pełne kapsuły lub Pal Sfery. Potwierdzisz ich usunięcie w następnym kroku.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Jedna torba ma za dużo przedmiotów, by ją sprawdzić. Potwierdzisz w następnym kroku.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "Jednorazowo można usunąć najwyżej %1 przedmiotów: pozostałe %2 nie zostaną teraz usunięte.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Nie zostaną usunięte (%1): ulubione lub założone przedmioty.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Tego nie można cofnąć.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Usuń (%1)",

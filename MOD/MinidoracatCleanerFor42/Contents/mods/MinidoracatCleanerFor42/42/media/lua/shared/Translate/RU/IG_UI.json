@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "Ещё видов: %1, всего предметов: %2 (в контейнерах ещё: %3, они тоже будут удалены)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "Среди выбранных предметов есть заполненные капсулы или Пал-сферы. На следующем шаге нужно будет подтвердить их удаление.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "В одной сумке слишком много предметов, её не удалось проверить. Подтвердите на следующем шаге.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "За один раз можно удалить не больше %1 предметов: ещё %2 сейчас не будут удалены.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Не будут удалены (%1): избранные или экипированные предметы.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Это действие нельзя отменить.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Удалить (%1)",

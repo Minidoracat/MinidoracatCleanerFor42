@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "%1 more kinds, %2 items in total (their containers hold %3 more, deleted too)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "The selection includes loaded capsules or Pal Spheres. You'll be asked to confirm their deletion next.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "A bag contains too many items to check completely. You'll be asked to confirm deletion in the next step.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "Up to %1 items per deletion: %2 more are not deleted this time.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Not deleted (%1): favorite or equipped items.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "This cannot be undone.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Delete (%1)",

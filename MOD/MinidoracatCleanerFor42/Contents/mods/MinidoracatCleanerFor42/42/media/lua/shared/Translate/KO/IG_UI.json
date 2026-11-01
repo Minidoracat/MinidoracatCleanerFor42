@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "그 외 %1종, 총 %2개 (용기 안의 %3개도 함께 삭제)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "적재된 캡슐이나 팰 스피어가 있습니다. 다음 단계에서 한 번 더 확인합니다.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "물건이 너무 많아 다 확인하지 못한 가방이 있습니다. 다음 단계에서 한 번 더 확인합니다.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "한 번에 최대 %1개까지 삭제됩니다. 나머지 %2개는 이번에 삭제되지 않습니다.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "%1개는 삭제하지 않습니다: 즐겨찾기나 장착 중인 아이템.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "되돌릴 수 없습니다.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "%1개 삭제",

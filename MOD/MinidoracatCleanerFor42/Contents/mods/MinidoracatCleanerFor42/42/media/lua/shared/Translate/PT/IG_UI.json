@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "Mais %1 tipos, %2 itens no total (os recipientes têm mais %3, excluídos também)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "A seleção inclui cápsulas ou Esferas de Pal carregadas. Você vai confirmar a exclusão delas no próximo passo.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Uma bolsa tem itens demais para verificar. Você vai confirmar no próximo passo.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "É possível excluir até %1 itens por vez: outros %2 não serão excluídos desta vez.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Não excluídos (%1): itens favoritos ou equipados.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Isso não pode ser desfeito.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Excluir (%1)",

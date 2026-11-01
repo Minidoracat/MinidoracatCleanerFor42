@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "ほか %1 種類、計 %2 個（容器の中身 %3 個も一緒に削除）",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "収納済みのカプセルかパルスフィアがあります。次の画面でもう一度確認します。",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "中身が多すぎて調べきれない袋があります。次の画面でもう一度確認します。",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "一度に削除できるのは %1 個までです。残りの %2 個は今回は削除されません。",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "%1 個は削除しません：お気に入りか装備中のアイテム。",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "元に戻せません。",
   "IGUI_MinidoracatCleaner_ConfirmButton": "%1 個を削除",

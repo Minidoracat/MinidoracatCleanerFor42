@@ -108,7 +108,7 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
             算出的結果不快取（否則種類 key 與翻譯名會凍成原樣 token）
 情境四十七：手動刪除的兩段確認（client 右鍵→主框→膠囊框→送出）——主框逐項列出（依名稱合併、
             有內容的在前並寫容器裡的件數、超過 8 種併一列且寫出其中容器裡的件數、寫出略過的最愛件數，
-            可刪滿上限後照樣數完）；主框按取消不送；選取裡（含袋子裡，不走進膠囊本身）有 PackThrow
+            可刪滿上限後照樣數完、超過上限的寫出「另外 N 件這次不會刪除」）；主框按取消不送；選取裡（含袋子裡，不走進膠囊本身）有 PackThrow
             已收膠囊時，主框按刪除後再跳膠囊框點名，膠囊框按取消＝整批不送；沒有膠囊時主框按刪除就送；
             袋子走訪額度用完時膠囊框寫「沒檢查完」；伺服器照舊刪膠囊，manual_delete 紀錄帶 contained=
 
@@ -4902,14 +4902,14 @@ local function bag(fullType, name, children)
 end
 local function open(items)
     local menu = { options = {} }
-    function menu:addOption(label, target, fn, p1, p2)
-        local option = { label = label, target = target, fn = fn, p1 = p1, p2 = p2 }
+    function menu:addOption(label, target, fn, p1, p2, p3)
+        local option = { label = label, target = target, fn = fn, p1 = p1, p2 = p2, p3 = p3 }
         self.options[#self.options + 1] = option
         return option
     end
     INVENTORY_MENU_HANDLERS[1](0, menu, items)
     local option = menu.options[#menu.options]
-    if option then option.fn(option.target, option.p1, option.p2) end
+    if option then option.fn(option.target, option.p1, option.p2, option.p3) end
     return option
 end
 local function answer(yes)
@@ -4991,7 +4991,7 @@ open(bags)
 check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmMoreContains:2|2|2"), "溢出列寫出容器裡另有的件數")
 answer(false)
 
--- ⑤-3 可刪的滿上限後（後面還有可刪的），排在最後的最愛照樣算進「不會刪除」
+-- ⑤-3 可刪的滿上限後（後面還有可刪的）：多出來的寫進「另外 N 件這次不會刪除」，排在最後的最愛照樣算進「不會刪除」
 local full = {}
 for i = 1, C.CONSTANTS.MANUAL_DELETE_LIMIT + 1 do full[i] = named(makeItem("Base.Nails"), "Nails") end
 local lateFavorite = named(makeItem("Base.Hammer"), "Hammer")
@@ -5000,6 +5000,11 @@ full[#full + 1] = lateFavorite
 option = open(full)
 check(#option.target == C.CONSTANTS.MANUAL_DELETE_LIMIT and has(lastText(), "IGUI_MinidoracatCleaner_ConfirmSkipped:1"),
     "滿上限後的最愛也寫進「不會刪除 1 件」")
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmOverLimit:" .. C.CONSTANTS.MANUAL_DELETE_LIMIT .. "|1"),
+    "超過一次上限的 1 件寫進「另外 1 件這次不會刪除」")
+answer(false)
+open(many)
+check(not has(lastText(), "IGUI_MinidoracatCleaner_ConfirmOverLimit"), "沒超過上限：不寫這句")
 answer(false)
 
 -- ⑥ 走訪額度：剛好用完不算沒看完；多一件就在膠囊框寫「沒檢查完」

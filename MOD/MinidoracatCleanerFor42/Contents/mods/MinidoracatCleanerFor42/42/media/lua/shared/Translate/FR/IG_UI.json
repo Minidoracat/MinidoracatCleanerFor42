@@ -8,6 +8,7 @@
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "%1 autres types, %2 objets au total (leurs contenants en ont %3 de plus, supprimés aussi)",
   "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "La sélection contient des capsules ou des Sphères de Pal chargées. Vous confirmerez leur suppression à l'étape suivante.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Un sac contient trop d'objets pour être vérifié. Vous confirmerez à l'étape suivante.",
+  "IGUI_MinidoracatCleaner_ConfirmOverLimit": "Au plus %1 objets par suppression : %2 autres ne seront pas supprimés cette fois.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "Non supprimés (%1) : objets favoris ou équipés.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "Cette action est irréversible.",
   "IGUI_MinidoracatCleaner_ConfirmButton": "Supprimer (%1)",

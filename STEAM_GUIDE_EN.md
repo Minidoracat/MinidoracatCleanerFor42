@@ -24,7 +24,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [*] [b]Where[/b]: anything within reach — inventory (nested bags too), cabinets, trunks and other vehicle containers, floor items.
 [*] [b]Safehouses[/b]: safehouse loot permissions apply in multiplayer.
 [*] [b]Cannot be deleted[/b]: favorites and items equipped, worn or on the hotbar/belt. With only these selected there is no "Delete" option; mixed with other items, the dialog says how many are skipped.
-[*] [b]Limit[/b]: up to 100 items per deletion.
+[*] [b]Limit[/b]: up to 100 items per deletion; select more and the dialog says how many are left this time.
 [/list]
 [h3]Confirmation[/h3]
 {{img:02-confirm-contains.jpg}}
