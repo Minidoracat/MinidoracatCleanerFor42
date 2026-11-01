@@ -7,15 +7,17 @@
 -- 這裡的動態檢查涵蓋測試 harness 與異常環境。
 --
 -- 【API 契約】框架同 major 只做 additive 變更；本 MOD 需要 API v1 rev>=1
--- （Skin.fill/border、Widgets/Toast、VirtualList）。版本不合＝當框架不存在
--- 處理（走退回），不帶半套狀態運行。
+-- （Skin.fill/border、Widgets/Toast、VirtualList），確認框另用 rev 7 的 Dialog（CAPABILITIES.dialog）。
+-- 版本不合＝當框架不存在處理（走退回），不帶半套狀態運行。
 
 if not (MinidoracatUI and MinidoracatUI.v1) then
     -- 測試環境／異常順序防禦：Kahlua require 對缺檔的行為未查證，pcall 包住
     pcall(require, "MinidoracatUI/V1")
     pcall(require, "MinidoracatUI/Widgets/Toast")
     pcall(require, "MinidoracatUI/VirtualList")
+    pcall(require, "MinidoracatUI/Widgets/Window")
 end
+require "ISUI/ISModalDialog"
 
 MinidoracatCleanerSkin = MinidoracatCleanerSkin or {}
 local Skin = MinidoracatCleanerSkin
@@ -38,7 +40,7 @@ Skin.COLORS = {
 }
 
 -- 載入期綁定：mod.info require= 保證框架的 lua 已全部先執行（見檔頭）。
-local FW, TOAST, VLIST = nil, nil, nil
+local FW, TOAST, VLIST, DIALOG = nil, nil, nil, nil
 do
     local ui = MinidoracatUI and MinidoracatUI.v1
     if ui and ui.API_MAJOR == 1 and ui.Skin then
@@ -48,6 +50,9 @@ do
         end
         if ui.CAPABILITIES and ui.CAPABILITIES.virtualList then
             VLIST = ui.VirtualList
+        end
+        if ui.CAPABILITIES and ui.CAPABILITIES.dialog then
+            DIALOG = ui.Dialog
         end
     end
 end
@@ -102,6 +107,71 @@ function Skin.notify(playerObj, message, kind)
             playerObj:setHaloNote(message, 120, 255, 120, 240)
         end
     end
+end
+
+-- 危險動作的確認框。opts：playerNum、title、text（\n 分行）、confirmText、cancelText、onResult(ok)。
+-- onResult 至多呼叫一次（按鈕、Enter／Esc、關閉鈕都算）；退回路徑被同一客戶端新開的框取代時不回呼。
+-- 框架 Dialog：確認鈕用 danger 樣式、Enter 確認／Esc 取消、高度照行數（Window.lua:556-657）。
+-- 退回原版 ISModalDialog 的情況：框架缺席，或分割畫面第 2–4 位的手把玩家——框架只接玩家 1 的
+-- 手把（Window.lua:332 Focus.takeJoypad(win, 0)），原版框可以把焦點交給指定玩家。
+local CONFIRM_WIDTH = 420
+local fallbackDialog = nil
+
+local function fallbackConfirm(opts)
+    if fallbackDialog then
+        fallbackDialog:destroy()
+        fallbackDialog = nil
+    end
+    local playerNum = opts.playerNum
+    local text = opts.title .. "\n\n" .. opts.text
+    -- CalcSize 用 Java regex split 分行（StringLib.java:1413），真換行照算高度；寬度依最長那行撐開。
+    -- 置中要用撐完的尺寸，不然長譯文的確認框整個偏右（法文實機 598 寬、偏右約 124px）
+    local width, height = ISModalDialog.CalcSize(360, 0, text)
+    local x = getPlayerScreenLeft(playerNum) + (getPlayerScreenWidth(playerNum) - width) / 2
+    local y = getPlayerScreenTop(playerNum) + (getPlayerScreenHeight(playerNum) - height) / 2
+    -- ISModalDialog.lua:187-210：onclick(target, button, param1, param2)
+    local dialog = ISModalDialog:new(x, y, width, height, text, true, nil, function(_, button)
+        fallbackDialog = nil
+        opts.onResult(button.internal == "YES")
+    end, playerNum)
+    dialog:initialise()
+    -- 按鈕寫出動作；危險色放在確認、安全色放在取消（原版是「是」綠、「否」紅）。
+    -- 原版按鈕固定 100 寬（ISModalDialog.lua:10-28），手把玩家的按鈕左邊還畫圖示：依文字重新量寬度再置中
+    local pad = JoypadState.players[playerNum + 1] ~= nil
+    dialog.yes:setTitle(opts.confirmText)
+    dialog.yes:setWidthToTitle(100, pad)
+    dialog.yes:enableCancelColor()
+    dialog.no:setTitle(opts.cancelText)
+    dialog.no:setWidthToTitle(100, pad)
+    dialog.no:enableAcceptColor()
+    dialog.yes:setX((width - 10) / 2 - dialog.yes.width)
+    dialog.no:setX((width + 10) / 2)
+    dialog:addToUIManager()
+    if pad then
+        dialog.prevFocus = JoypadState.players[playerNum + 1].focus
+        setJoypadFocus(playerNum, dialog)
+    end
+    fallbackDialog = dialog
+end
+
+function Skin.confirm(opts)
+    local otherPad = opts.playerNum ~= 0 and JoypadState.players[opts.playerNum + 1] ~= nil
+    if DIALOG and not otherPad then
+        DIALOG.show({
+            title = opts.title,
+            text = opts.text,
+            width = CONFIRM_WIDTH,
+            confirmText = opts.confirmText,
+            cancelText = opts.cancelText,
+            danger = true,
+            opaque = true, -- rev 18：疊在物品欄上時底下的字不透出來；舊框架忽略這個欄位
+            onResult = function(ok)
+                opts.onResult(ok == true)
+            end,
+        })
+        return
+    end
+    fallbackConfirm(opts)
 end
 
 return Skin

@@ -180,6 +180,10 @@ Cleaner.CONSTANTS = {
     -- 截斷（單一容器逾兩萬件；ItemNumbersLimitPerContainer 預設 0＝無件數上限），
     -- 就往下／往上調這個值
     INDEX_VISIT_LIMIT = 20000,
+    -- 確認框往袋子裡找已收膠囊時的走訪件數上限（同一次刪除共用，見 findLoadedCapsules）。
+    -- 袋子內容量由玩家決定，成本要綁請求；用完只是膠囊框多寫一句「沒檢查完」，不擋刪除。
+    -- 一次刪除選 100 件、袋子各裝幾十件時遠低於此
+    NESTED_VISIT_LIMIT = 2000,
 }
 
 local function trim(value)
@@ -634,6 +638,28 @@ function Cleaner.log(event, who, x, y, z, detail)
     writeLog(Cleaner.MOD_ID, text)
 end
 
+-- 手動刪除的稽核紀錄（單機與多人共用，整批一行）。contained＝刪掉的容器裡原本裝的件數
+-- （頂層，刪之前數）；放在 types= 前面，「types= 到行尾」的切法照舊可用
+function Cleaner.logManualDelete(playerObj, removedByType, removed, contained)
+    if removed == 0 then
+        return
+    end
+    local details = {}
+    for fullType, count in pairs(removedByType) do
+        details[#details + 1] = Cleaner.sanitize(fullType) .. "=" .. count
+    end
+    Cleaner.sortSafe(details, function(a, b) return a < b end)
+    local square = playerObj:getCurrentSquare()
+    Cleaner.log(
+        "manual_delete",
+        playerObj:getUsername(),
+        square and square:getX() or 0,
+        square and square:getY() or 0,
+        square and square:getZ() or 0,
+        "removed=" .. removed .. " contained=" .. contained .. " types=" .. table.concat(details, ",")
+    )
+end
+
 -- 裝著東西的容器不可刪（避免連同內容物一起銷毀）；空容器可刪。
 -- getInventory() 只存在於 InventoryContainer（InventoryContainer.java:49），
 -- 故先用 vanilla 慣用的 instanceof 判定（ISInventoryPane.lua:967 等）再取用。
@@ -657,22 +683,103 @@ end
 -- 手動刪除只擋「最愛」與「裝備／穿戴／掛載中」——都是防手滑的硬保護。
 -- 有內容的容器**不擋**：帶 NeverEmpty tag 的容器（所有鑰匙環）在戰利品生成時若內容為空會被直接
 -- 移除（ItemPickerJava.java:1160），意即世上不存在空鑰匙環，擋掉等於整個系列永遠不能刪。
--- vanilla 垃圾桶同樣允許銷毀裝滿的容器；改由確認視窗揭露內容物數量，讓玩家自己決定。
+-- vanilla 垃圾桶同樣允許銷毀裝滿的容器；改由確認視窗逐項列出內容物件數，讓玩家自己決定。
+-- PackThrow 的已收膠囊也不擋（2026-11-02 使用者裁定）：客戶端在主確認框之後另跳一個框點名
+-- 整台車或動物（findLoadedCapsules），伺服器照舊刪。
 function Cleaner.canManuallyDelete(playerObj, item)
     return item ~= nil
         and not item:isFavorite()
         and not Cleaner.isEquippedOrWorn(playerObj, item)
 end
 
--- 選取清單中所有容器的內容物總數（供確認視窗揭露風險）
-function Cleaner.countContainedItems(items)
-    local total = 0
+-- 容器頂層裝了幾件；不是容器或空的回 0。確認框與 manual_delete 紀錄共用
+function Cleaner.containedCount(item)
+    if not Cleaner.hasContents(item) then
+        return 0
+    end
+    return item:getInventory():getItems():size()
+end
+
+-- 確認框的清單：依顯示名稱合併成一列（件數、容器裡的件數各自加總）；裝著東西的在前（裡面件數多的先），
+-- 其餘數量多的先，同分照選取順序（sortSafe 是穩定排序）
+function Cleaner.deleteSummary(items)
+    local rows, byName = {}, {}
     for _, item in ipairs(items) do
-        if Cleaner.hasContents(item) then
-            total = total + item:getInventory():getItems():size()
+        local name = item:getDisplayName()
+        local row = byName[name]
+        if not row then
+            row = { name = name, count = 0, contained = 0 }
+            byName[name] = row
+            rows[#rows + 1] = row
+        end
+        row.count = row.count + 1
+        row.contained = row.contained + Cleaner.containedCount(item)
+    end
+    Cleaner.sortSafe(rows, function(a, b)
+        if a.contained ~= b.contained then
+            return a.contained > b.contained
+        end
+        return a.count > b.count
+    end)
+    return rows
+end
+
+-- PackThrow 的已收膠囊（裝車）與已收帕魯球（裝動物），見 PackThrow 的 MinidoracatPackThrow_items.txt。
+-- 只比 fullType 字首：類型名是存檔契約，比 PackThrow 的 Lua 函式名穩，也不必依賴它載入；
+-- 沒裝 PackThrow 時這種物品不存在，比對永遠不成立。回傳 "vehicle"／"animal"／nil
+local LOADED_KINDS = {
+    { prefix = "MinidoracatPackThrow.LoadedCapsule", kind = "vehicle" },
+    { prefix = "MinidoracatPackThrow.LoadedSphere", kind = "animal" },
+}
+
+function Cleaner.loadedCapsuleKind(item)
+    local fullType = item:getFullType()
+    for _, entry in ipairs(LOADED_KINDS) do
+        if string.sub(fullType, 1, #entry.prefix) == entry.prefix then
+            return entry.kind
         end
     end
-    return total
+    return nil
+end
+
+-- 選取裡的已收膠囊，含袋子裡（往下到底）的：{ item, kind, holder }，holder＝裝著它、被選取的
+-- 最外層那件（直接選到的膠囊為 nil）。第二個回傳值 true＝走訪額度 NESTED_VISIT_LIMIT 用完，
+-- 有袋子沒看完。只給確認框用：伺服器不擋膠囊（2026-11-02 使用者裁定照舊能刪、另跳確認框）。
+-- 沒裝 PackThrow 時不往袋子裡走（MinidoracatPackThrow 是它 shared Core 定義的全域）。
+-- 已收膠囊本身也是容器（車上貨物放在裡面），不往裡走：那一列已寫「整台車和車上的東西」，
+-- 走進去只會把額度花在貨物上。用佇列逐層走：Kahlua 呼叫深度上限 1000（Coroutine.java:62-64），遞迴會被深層袋子撐爆
+function Cleaner.findLoadedCapsules(items)
+    local found, queue = {}, {}
+    local function visit(item, holder)
+        local kind = Cleaner.loadedCapsuleKind(item)
+        if kind then
+            found[#found + 1] = { item = item, kind = kind, holder = holder }
+        elseif MinidoracatPackThrow and instanceof(item, "InventoryContainer") then
+            queue[#queue + 1] = { item = item, holder = holder or item }
+        end
+    end
+    for _, item in ipairs(items) do
+        visit(item, nil)
+    end
+    local left = Cleaner.CONSTANTS.NESTED_VISIT_LIMIT
+    local head = 1
+    while head <= #queue do
+        local entry = queue[head]
+        head = head + 1
+        local list = entry.item:getInventory():getItems()
+        for i = 0, list:size() - 1 do
+            -- 計數與檢查同層：nil entry 也扣額度，越不過上限
+            left = left - 1
+            if left < 0 then
+                return found, true
+            end
+            local child = list:get(i)
+            if child then
+                visit(child, entry.holder)
+            end
+        end
+    end
+    return found, false
 end
 
 function Cleaner.isSafeFloorCandidate(item, worldObj, protectMatcher)

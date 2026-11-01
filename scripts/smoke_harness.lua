@@ -1,6 +1,6 @@
 --[[
 用假的 PZ 全域驅動真正的 Core.lua / WorldScanner.lua / Commands.lua / AnimalScanner.lua /
-DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十六個情境並斷言結果。
+DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / WorldAudit.lua，跑四十七個情境並斷言結果。
 
     lua scripts/smoke_harness.lua        （在 repo 根目錄執行）
 
@@ -106,6 +106,11 @@ DropStamp.lua / Client.lua / Tooltip.lua / AnimalBreeding.lua / Picker.lua / Wor
 情境四十六：動物清單選項的解析快取——農場治理每 tick 都讀圈養覆寫與群組清單，沙盒值沒變就
             不重解析（五個讀取函式各自釘住）；執行期改值後下一輪照新值；名稱索引還沒建成時
             算出的結果不快取（否則種類 key 與翻譯名會凍成原樣 token）
+情境四十七：手動刪除的兩段確認（client 右鍵→主框→膠囊框→送出）——主框逐項列出（依名稱合併、
+            有內容的在前並寫容器裡的件數、超過 8 種併一列且寫出其中容器裡的件數、寫出略過的最愛件數，
+            可刪滿上限後照樣數完）；主框按取消不送；選取裡（含袋子裡，不走進膠囊本身）有 PackThrow
+            已收膠囊時，主框按刪除後再跳膠囊框點名，膠囊框按取消＝整批不送；沒有膠囊時主框按刪除就送；
+            袋子走訪額度用完時膠囊框寫「沒檢查完」；伺服器照舊刪膠囊，manual_delete 紀錄帶 contained=
 
 為什麼需要它：luac -p 只驗語法，抓不到「改了函式簽章但漏改呼叫點」這類執行期錯誤——
 hotspotKey 從兩參數改成三參數時漏改了 processDeleteQueue 的呼叫點，要等第一件物品真的被
@@ -196,6 +201,8 @@ GAME_START_HANDLERS, TRANSACTION_HANDLERS, SERVER_COMMAND_HANDLERS, CREATE_PLAYE
 TEN_MINUTE_HANDLERS = {}
 -- OnServerStarted 供 WorldAudit 的 hook 安裝用
 SERVER_STARTED_HANDLERS = {}
+-- 物品右鍵選單（ContextMenu 的手動刪除），情境四十七用
+INVENTORY_MENU_HANDLERS = {}
 Events = setmetatable({}, {
     __index = function(_, name)
         return {
@@ -203,6 +210,7 @@ Events = setmetatable({}, {
                 if name == "OnTick" then tickHandlers[#tickHandlers + 1] = fn
                 elseif name == "OnClientCommand" then clientCommandHandlers[#clientCommandHandlers + 1] = fn
                 elseif name == "OnFillWorldObjectContextMenu" then worldMenuHandlers[#worldMenuHandlers + 1] = fn
+                elseif name == "OnFillInventoryObjectContextMenu" then INVENTORY_MENU_HANDLERS[#INVENTORY_MENU_HANDLERS + 1] = fn
                 elseif name == "OnGameStart" then GAME_START_HANDLERS[#GAME_START_HANDLERS + 1] = fn
                 elseif name == "OnProcessTransaction" then TRANSACTION_HANDLERS[#TRANSACTION_HANDLERS + 1] = fn
                 elseif name == "OnServerCommand" then SERVER_COMMAND_HANDLERS[#SERVER_COMMAND_HANDLERS + 1] = fn
@@ -4832,6 +4840,214 @@ for option in pairs(options46) do sandbox[option] = nil end
 sandbox.AnimalCleanupEnabled = nil
 sandbox.AnimalScanIntervalSeconds = nil
 sandbox.MaxZoneAnimalsPerGroup = nil
+end)()
+
+print("情境四十七：手動刪除的兩段確認（主框逐項列出、膠囊另跳一框、紀錄帶 contained=）")
+;(function()
+local C = MinidoracatCleaner
+check(#INVENTORY_MENU_HANDLERS == 1, "前提：ContextMenu 已註冊物品右鍵選單 handler")
+local saved = {
+    isClient = isClient, getText = getText, sendClientCommand = sendClientCommand,
+    ISModalDialog = ISModalDialog, ISInventoryPane = ISInventoryPane, JoypadState = JoypadState,
+    setJoypadFocus = setJoypadFocus, getPlayerScreenLeft = getPlayerScreenLeft,
+    getPlayerScreenTop = getPlayerScreenTop, getPlayerScreenWidth = getPlayerScreenWidth,
+    getPlayerScreenHeight = getPlayerScreenHeight, MinidoracatPackThrow = MinidoracatPackThrow,
+}
+local sent, dialogs = {}, {}
+isClient = function() return true end
+getText = function(key, ...) return key .. ":" .. table.concat({ ... }, "|") end
+sendClientCommand = function(_, module, command, args)
+    sent[#sent + 1] = { module = module, command = command, ids = args.ids }
+end
+ISInventoryPane = { getActualItems = function(items) return items end }
+JoypadState = { players = {} }
+setJoypadFocus = function() end
+getPlayerScreenLeft = function() return 0 end
+getPlayerScreenTop = function() return 0 end
+getPlayerScreenWidth = function() return 1920 end
+getPlayerScreenHeight = function() return 1080 end
+-- 沒有 MinidoracatUI：Skin.confirm 走原版 ISModalDialog 退回路徑（ISModalDialog.lua:58-64 的 onclick 形狀）
+ISModalDialog = {
+    CalcSize = function(w, h) return w, h end,
+    new = function(_, x, y, w, h, text, yesno, target, onclick)
+        local function button(internal)
+            local b = { internal = internal, width = 100 }
+            function b:setTitle() end
+            function b:setWidthToTitle(min) self.width = min end
+            function b:setX() end
+            function b:enableCancelColor() end
+            function b:enableAcceptColor() end
+            return b
+        end
+        local d = { text = text, onclick = onclick, yes = button("YES"), no = button("NO") }
+        function d:initialise() end
+        function d:destroy() end
+        function d:addToUIManager() dialogs[#dialogs + 1] = self end
+        return d
+    end,
+}
+MinidoracatPackThrow = {} -- 模擬裝了 PackThrow（findLoadedCapsules 才往袋子裡走）
+
+local function named(item, name)
+    item.getDisplayName = function() return name end
+    return item
+end
+local function bag(fullType, name, children)
+    local item = named(makeItem(fullType), name)
+    local inv = makeContainer(nil)
+    for _, child in ipairs(children or {}) do inv:add(child) end
+    item._isContainer = true
+    item.getInventory = function() return inv end
+    return item
+end
+local function open(items)
+    local menu = { options = {} }
+    function menu:addOption(label, target, fn, p1, p2)
+        local option = { label = label, target = target, fn = fn, p1 = p1, p2 = p2 }
+        self.options[#self.options + 1] = option
+        return option
+    end
+    INVENTORY_MENU_HANDLERS[1](0, menu, items)
+    local option = menu.options[#menu.options]
+    if option then option.fn(option.target, option.p1, option.p2) end
+    return option
+end
+local function answer(yes)
+    local d = dialogs[#dialogs]
+    d.onclick(nil, yes and d.yes or d.no)
+end
+local function lastText() return dialogs[#dialogs].text end
+local function has(text, needle) return text:find(needle, 1, true) ~= nil end
+
+-- ① 主框：容器在前、同名合併、略過最愛、預告膠囊框
+local favorite = named(makeItem("Base.Hammer"), "Hammer")
+favorite._favorite = true
+local nailA, nailB = named(makeItem("Base.Nails"), "Nails"), named(makeItem("Base.Nails"), "Nails")
+local pack = bag("Base.Bag_Military", "Pack", { makeItem("Base.Saw"), makeItem("Base.Rope") })
+local cap = named(makeItem("MinidoracatPackThrow.LoadedCapsuleMagic"), "MagicCap:P379")
+local selection = { nailA, favorite, pack, nailB, cap }
+local option = open(selection)
+check(option and #option.target == 4, "選單只帶可刪的 4 件（最愛略過）")
+local main = lastText()
+check(has(main, "IGUI_MinidoracatCleaner_ConfirmTitle:4"), "主框標題寫出件數")
+local rowPack = main:find("IGUI_MinidoracatCleaner_ConfirmRowContains:Pack|1|2", 1, true)
+local rowNails = main:find("IGUI_MinidoracatCleaner_ConfirmRow:Nails|2", 1, true)
+check(rowPack and rowNails and rowPack < rowNails, "有內容的容器排在最前並寫件數；同名的釘子合併成 x 2")
+check(has(main, "IGUI_MinidoracatCleaner_ConfirmSkipped:1"), "主框寫出略過 1 件（最愛）")
+check(has(main, "IGUI_MinidoracatCleaner_ConfirmCapsuleNext"), "有膠囊：主框預告下一步")
+
+-- ② 主框按取消 → 不送、也不跳膠囊框；主框按刪除 → 膠囊框點名；膠囊框按取消 → 整批不送
+local before = #dialogs
+answer(false)
+check(#dialogs == before and #sent == 0, "主框按取消：不送、也不跳膠囊框")
+open(selection)
+before = #dialogs
+answer(true)
+check(#dialogs == before + 1 and #sent == 0, "主框按刪除後先跳膠囊框，還沒送出")
+check(has(lastText(), "IGUI_MinidoracatCleaner_CapsuleVehicle:MagicCap:P379"), "膠囊框點名整台車")
+answer(false)
+check(#sent == 0, "膠囊框按取消：這一批都不送")
+
+-- ③ 兩個框都按刪除才送出，送的是整批
+open(selection)
+answer(true)
+answer(true)
+check(#sent == 1 and #sent[1].ids == 4, "兩個框都按刪除：送出整批 4 件")
+
+-- ④ 袋子裡的帕魯球也點名，寫出在哪個袋子
+local sphere = named(makeItem("MinidoracatPackThrow.LoadedSphereBasic"), "PalSphere:Cow")
+local school = bag("Base.Bag_Schoolbag", "School", { makeItem("Base.Pen"), sphere })
+open({ school })
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmRowContains:School|1|2"), "主框照樣列出書包與件數")
+answer(true)
+check(has(lastText(), "IGUI_MinidoracatCleaner_CapsuleAnimal:IGUI_MinidoracatCleaner_CapsuleInBag:PalSphere:Cow|School"),
+    "膠囊框點名袋子裡的帕魯球與它在哪個袋子")
+answer(true)
+check(#sent == 2, "袋子：兩個框都按刪除才送出")
+
+-- ⑤ 沒有膠囊：主框按刪除就送，不跳第二個框；超過 8 種併成一列
+local many = {}
+for i = 1, 10 do many[i] = named(makeItem("Base.Item" .. i), "Item" .. i) end
+open(many)
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmMore:2|2"), "超過 8 種：其餘 2 種併成一列")
+check(not has(lastText(), "IGUI_MinidoracatCleaner_ConfirmCapsuleNext"), "沒有膠囊：主框不預告下一步")
+before = #dialogs
+answer(false)
+check(#dialogs == before and #sent == 2, "沒有膠囊：主框按取消就不送")
+open(many)
+before = #dialogs
+answer(true)
+check(#dialogs == before and #sent == 3, "沒有膠囊：主框按刪除就送出")
+
+-- ⑤-2 同名容器合併成一列、件數加總；第 9 種以後裡面還有東西時，溢出列也寫出容器裡的件數
+local trashA = bag("Base.Bag_TrashBag", "Trash", { makeItem("Base.Pen") })
+local trashB = bag("Base.Bag_TrashBag", "Trash", { makeItem("Base.Pen"), makeItem("Base.Pen") })
+open({ trashA, trashB })
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmRowContains:Trash|2|3"), "同名容器合併：x 2、內有 3 件")
+answer(false)
+local bags = {}
+for i = 1, 10 do bags[i] = bag("Base.Bag_" .. i, "Bag" .. i, { makeItem("Base.Pen") }) end
+open(bags)
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmMoreContains:2|2|2"), "溢出列寫出容器裡另有的件數")
+answer(false)
+
+-- ⑤-3 可刪的滿上限後（後面還有可刪的），排在最後的最愛照樣算進「不會刪除」
+local full = {}
+for i = 1, C.CONSTANTS.MANUAL_DELETE_LIMIT + 1 do full[i] = named(makeItem("Base.Nails"), "Nails") end
+local lateFavorite = named(makeItem("Base.Hammer"), "Hammer")
+lateFavorite._favorite = true
+full[#full + 1] = lateFavorite
+option = open(full)
+check(#option.target == C.CONSTANTS.MANUAL_DELETE_LIMIT and has(lastText(), "IGUI_MinidoracatCleaner_ConfirmSkipped:1"),
+    "滿上限後的最愛也寫進「不會刪除 1 件」")
+answer(false)
+
+-- ⑥ 走訪額度：剛好用完不算沒看完；多一件就在膠囊框寫「沒檢查完」
+local function stuffed(n)
+    local children = {}
+    for i = 1, n do children[i] = makeItem("Base.Nails") end
+    return bag("Base.Bag_ALICEpack", "Alice", children)
+end
+local limit = C.CONSTANTS.NESTED_VISIT_LIMIT
+open({ stuffed(limit) })
+before = #dialogs
+answer(true)
+check(#dialogs == before and #sent == 4, "袋子剛好裝滿額度：看完了，沒有膠囊就直接送")
+open({ stuffed(limit + 1) })
+check(has(lastText(), "IGUI_MinidoracatCleaner_ConfirmUncheckedNext")
+    and not has(lastText(), "IGUI_MinidoracatCleaner_ConfirmCapsuleNext"), "額度用完、沒找到膠囊：主框寫袋子沒檢查完，不說有膠囊")
+answer(true)
+check(has(lastText(), "IGUI_MinidoracatCleaner_CapsuleUncheckedTitle") and has(lastText(), "IGUI_MinidoracatCleaner_CapsuleUnchecked:"),
+    "額度用完：第二框換成「還是要刪除」標題並寫「沒檢查完」")
+answer(false)
+check(#sent == 4, "額度用完的那批按取消：不送")
+
+-- ⑥-2 已收膠囊本身是容器（車上貨物在裡面）：不往裡走，貨物再多也不吃額度，後面袋子裡的帕魯球照樣點名
+local cargo = {}
+for i = 1, limit + 1 do cargo[i] = makeItem("Base.Plank") end
+local heavyCap = bag("MinidoracatPackThrow.LoadedCapsuleCartoon", "CartoonCap:Truck", cargo)
+local sphereBag = bag("Base.Bag_Schoolbag", "School2",
+    { named(makeItem("MinidoracatPackThrow.LoadedSphereBasic"), "PalSphere:Pig") })
+local found, unchecked = C.findLoadedCapsules({ heavyCap, sphereBag })
+check(#found == 2 and found[2].item:getDisplayName() == "PalSphere:Pig" and not unchecked,
+    "膠囊貨物不吃額度：袋子裡的帕魯球照樣點名、不寫「沒檢查完」")
+
+for name, value in pairs(saved) do _G[name] = value end
+MinidoracatPackThrow = saved.MinidoracatPackThrow
+
+-- ⑦ 伺服器照舊刪膠囊；紀錄帶 contained=（容器原本裝的件數，刪之前數）
+nowMs = nowMs + 1000
+local packS = bag("Base.Bag_Military", "Pack", { makeItem("Base.Saw"), makeItem("Base.Rope") })
+local capS = named(makeItem("MinidoracatPackThrow.LoadedCapsuleMagic"), "Cap")
+playerInv:add(packS)
+playerInv:add(capS)
+for _, fn in ipairs(clientCommandHandlers) do
+    fn("MinidoracatCleaner", "deleteItems", player, { ids = { packS:getID(), capS:getID() } })
+end
+check(not inContainer(playerInv, capS), "伺服器照舊刪已收膠囊（2026-11-02 裁定：不擋，客戶端另跳確認框）")
+check(has(logLines[#logLines] or "",
+    "removed=2 contained=2 types=Base.Bag_Military=1,MinidoracatPackThrow.LoadedCapsuleMagic=1"),
+    "manual_delete 紀錄帶 contained=，types= 仍在最後（實際 " .. tostring(logLines[#logLines]) .. "）")
 end)()
 if failures > 0 then
     print(failures .. " 項失敗")

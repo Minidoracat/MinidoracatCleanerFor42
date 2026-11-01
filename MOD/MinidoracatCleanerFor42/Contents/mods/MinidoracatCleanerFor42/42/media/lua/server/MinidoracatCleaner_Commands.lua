@@ -33,26 +33,6 @@ local function normalizeIDs(args, limit, truncate)
     return result
 end
 
-local function logManualDelete(playerObj, removedByType, removed)
-    if removed == 0 then
-        return
-    end
-    local details = {}
-    for fullType, count in pairs(removedByType) do
-        details[#details + 1] = Cleaner.sanitize(fullType) .. "=" .. count
-    end
-    Cleaner.sortSafe(details, function(a, b) return a < b end)
-    local square = playerObj:getCurrentSquare()
-    Cleaner.log(
-        "manual_delete",
-        playerObj:getUsername(),
-        square and square:getX() or 0,
-        square and square:getY() or 0,
-        square and square:getZ() or 0,
-        "removed=" .. removed .. " types=" .. table.concat(details, ",")
-    )
-end
-
 local function deleteItems(playerObj, args)
     if Cleaner.getOption("AllowManualDelete") == false then
         return
@@ -68,10 +48,13 @@ local function deleteItems(playerObj, args)
 
     local removedByType = {}
     local removed = 0
+    local contained = 0
     for _, id in ipairs(ids) do
         local found = index[id]
         local item = found and found.item
         if item and Cleaner.canManuallyDelete(playerObj, item) then
+            -- 刪之前數：紀錄要寫容器裡原本裝了幾件
+            local inside = Cleaner.containedCount(item)
             local deleted = false
             if found.kind == "floor" then
                 if found.worldObj:getItem() == item and found.worldObj:getSquare() == found.square then
@@ -82,12 +65,13 @@ local function deleteItems(playerObj, args)
             end
             if deleted then
                 removed = removed + 1
+                contained = contained + inside
                 local fullType = item:getFullType()
                 removedByType[fullType] = (removedByType[fullType] or 0) + 1
             end
         end
     end
-    logManualDelete(playerObj, removedByType, removed)
+    Cleaner.logManualDelete(playerObj, removedByType, removed, contained)
 
     -- 刪除封包（GameServer.sendRemoveItemFromContainer:2445-2461）只更新客戶端的容器**資料**，
     -- 不會叫物品欄面板重繪；ISInventoryPane 有自己的顯示快取，要等事件才重建。結果是玩家看著

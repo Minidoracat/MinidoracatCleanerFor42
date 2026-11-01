@@ -1,15 +1,20 @@
 require "MinidoracatCleaner_Core"
+require "MinidoracatCleaner_Skin"
 require "ISUI/ISInventoryPane"
-require "ISUI/ISModalDialog"
 
 local Cleaner = MinidoracatCleaner
-local deleteDialog = nil
+local Skin = MinidoracatCleanerSkin
+-- 確認框最多列幾種、膠囊框最多列幾顆；其餘併成一列「還有 N 種／顆」
+local CONFIRM_ROWS = 8
+local CAPSULE_ROWS = 8
 
 local function deleteLocally(playerObj, items)
     local removedByType = {}
     local removed = 0
+    local contained = 0
     for _, item in ipairs(items) do
         if Cleaner.canManuallyDelete(playerObj, item) then
+            local inside = Cleaner.containedCount(item)
             local deleted = false
             local worldObj = item:getWorldItem()
             if worldObj and worldObj:getSquare() then
@@ -19,41 +24,20 @@ local function deleteLocally(playerObj, items)
             end
             if deleted then
                 removed = removed + 1
+                contained = contained + inside
                 local fullType = item:getFullType()
                 removedByType[fullType] = (removedByType[fullType] or 0) + 1
             end
         end
     end
-
-    if removed > 0 then
-        local details = {}
-        for fullType, count in pairs(removedByType) do
-            details[#details + 1] = Cleaner.sanitize(fullType) .. "=" .. count
-        end
-        Cleaner.sortSafe(details, function(a, b) return a < b end)
-        local square = playerObj:getCurrentSquare()
-        Cleaner.log(
-            "manual_delete",
-            playerObj:getUsername(),
-            square and square:getX() or 0,
-            square and square:getY() or 0,
-            square and square:getZ() or 0,
-            "removed=" .. removed .. " types=" .. table.concat(details, ",")
-        )
-    end
+    Cleaner.logManualDelete(playerObj, removedByType, removed, contained)
 end
 
-local function onConfirmDelete(_, button, playerNum, items)
-    deleteDialog = nil
-    if button.internal ~= "YES" then
-        return
-    end
-
+local function sendDelete(playerNum, items)
     local playerObj = getSpecificPlayer(playerNum)
     if not playerObj then
         return
     end
-
     if isClient() then
         local ids = {}
         for _, item in ipairs(items) do
@@ -65,55 +49,111 @@ local function onConfirmDelete(_, button, playerNum, items)
     end
 end
 
-local function showDeleteDialog(items, playerNum)
-    if deleteDialog then
-        deleteDialog:destroy()
-        deleteDialog = nil
+-- 主框的內文：逐項列出（Core.deleteSummary），有已收膠囊（或沒看完的袋子）時預告下一步，最後寫被略過的件數
+local function summaryText(items, skipped, found, unchecked)
+    local rows = Cleaner.deleteSummary(items)
+    local lines = {}
+    for i = 1, math.min(#rows, CONFIRM_ROWS) do
+        local row = rows[i]
+        if row.contained > 0 then
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmRowContains", row.name, tostring(row.count),
+                tostring(row.contained))
+        else
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmRow", row.name, tostring(row.count))
+        end
     end
+    if #rows > CONFIRM_ROWS then
+        local rest, inside = 0, 0
+        for i = CONFIRM_ROWS + 1, #rows do
+            rest = rest + rows[i].count
+            inside = inside + rows[i].contained
+        end
+        local kinds = tostring(#rows - CONFIRM_ROWS)
+        if inside > 0 then
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmMoreContains", kinds, tostring(rest),
+                tostring(inside))
+        else
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmMore", kinds, tostring(rest))
+        end
+    end
+    lines[#lines + 1] = ""
+    if #found > 0 then
+        lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmCapsuleNext")
+    elseif unchecked then
+        lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmUncheckedNext")
+    end
+    if skipped > 0 then
+        lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmSkipped", tostring(skipped))
+    end
+    lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_ConfirmUndo")
+    return table.concat(lines, "\n")
+end
 
-    local playerObj = getSpecificPlayer(playerNum)
-    if not playerObj or #items == 0 then
+-- 膠囊框的內文：每顆點名（PackThrow 客戶端已把名字改成「膠囊：車名／動物名」，client/Info.lua），
+-- 袋子裡的寫出在哪個袋子；走訪額度用完時加一句「沒檢查完」
+local function capsuleText(found, unchecked)
+    local lines = {}
+    for i = 1, math.min(#found, CAPSULE_ROWS) do
+        local entry = found[i]
+        local name = entry.item:getDisplayName()
+        if entry.holder then
+            name = getText("IGUI_MinidoracatCleaner_CapsuleInBag", name, entry.holder:getDisplayName())
+        end
+        if entry.kind == "animal" then
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_CapsuleAnimal", name)
+        else
+            lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_CapsuleVehicle", name)
+        end
+    end
+    if #found > CAPSULE_ROWS then
+        lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_CapsuleMore", tostring(#found - CAPSULE_ROWS))
+    end
+    if unchecked then
+        lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_CapsuleUnchecked")
+    end
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = getText("IGUI_MinidoracatCleaner_CapsuleWarn")
+    return table.concat(lines, "\n")
+end
+
+-- 兩段確認：主框逐項列出；選取裡（含袋子裡）有 PackThrow 的已收膠囊時，主框按刪除後再跳膠囊框，
+-- 點名整台車或動物，兩個都按刪除才送出。膠囊框按取消＝這一批都不刪。
+-- 伺服器不擋膠囊（2026-11-02 使用者裁定：照舊能刪、另跳確認框、按鈕確認不打字）
+local function showDeleteDialog(items, playerNum, skipped)
+    if #items == 0 or not getSpecificPlayer(playerNum) then
         return
     end
-
-    local itemName = items[1]:getDisplayName()
-    local text = getText("IGUI_MinidoracatCleaner_ConfirmDelete", itemName, #items)
-    -- 容器內還有東西時明確揭露（鑰匙環一定掛著鑰匙、背包可能裝滿戰利品）
-    local contained = Cleaner.countContainedItems(items)
-    local width = 350
-    local height = 120
-    if contained > 0 then
-        -- ISModalDialog.lua:188 把字面 \n 轉成真換行後才呼叫 CalcSize，而 CalcSize 仍以字面 \n
-        -- 分行（:172），等於多行文字一律只算一行高 → 自動撐高不可靠，這裡直接預留第二行空間
-        text = text .. "\n" .. getText("IGUI_MinidoracatCleaner_ConfirmContains", tostring(contained))
-        width = 460
-        height = 150
-    end
-    -- ISModalDialog:new 會先用 CalcSize 依文字把寬高撐大（ISModalDialog.lua:166-189），
-    -- 置中要用撐完的尺寸，不然長譯文的確認框整個偏右（法文實機 598 寬、偏右約 124px）
-    width, height = ISModalDialog.CalcSize(width, height, (text:gsub("\\n", "\n")))
-    local x = getPlayerScreenLeft(playerNum) + (getPlayerScreenWidth(playerNum) - width) / 2
-    local y = getPlayerScreenTop(playerNum) + (getPlayerScreenHeight(playerNum) - height) / 2
-    -- ISModalDialog.lua:187-210; ISInventoryPane.lua:656-671
-    deleteDialog = ISModalDialog:new(
-        x,
-        y,
-        width,
-        height,
-        text,
-        true,
-        nil,
-        onConfirmDelete,
-        playerNum,
-        playerNum,
-        items
-    )
-    deleteDialog:initialise()
-    deleteDialog:addToUIManager()
-    if JoypadState.players[playerNum + 1] then
-        deleteDialog.prevFocus = JoypadState.players[playerNum + 1].focus
-        setJoypadFocus(playerNum, deleteDialog)
-    end
+    local found, unchecked = Cleaner.findLoadedCapsules(items)
+    local needCapsuleStep = #found > 0 or unchecked
+    Skin.confirm({
+        playerNum = playerNum,
+        title = getText("IGUI_MinidoracatCleaner_ConfirmTitle", tostring(#items)),
+        text = summaryText(items, skipped or 0, found, unchecked),
+        confirmText = getText("IGUI_MinidoracatCleaner_ConfirmButton", tostring(#items)),
+        cancelText = getText("UI_Cancel"),
+        onResult = function(ok)
+            if not ok then
+                return
+            end
+            if not needCapsuleStep then
+                sendDelete(playerNum, items)
+                return
+            end
+            Skin.confirm({
+                playerNum = playerNum,
+                title = getText(#found > 0 and "IGUI_MinidoracatCleaner_CapsuleTitle"
+                    or "IGUI_MinidoracatCleaner_CapsuleUncheckedTitle"),
+                text = capsuleText(found, unchecked),
+                confirmText = getText("IGUI_MinidoracatCleaner_CapsuleButton"),
+                cancelText = getText("UI_Cancel"),
+                onResult = function(sure)
+                    if sure then
+                        sendDelete(playerNum, items)
+                    end
+                end,
+            })
+        end,
+    })
 end
 
 local function onFillInventoryObjectContextMenu(playerNum, context, items)
@@ -129,12 +169,12 @@ local function onFillInventoryObjectContextMenu(playerNum, context, items)
     -- ISInventoryPane.lua:908-930
     local actualItems = ISInventoryPane.getActualItems(items)
     local deletable = {}
+    local skipped = 0 -- 最愛、裝備中：確認框寫出「不會刪除 N 件」。可刪的滿上限後照樣數完
     for _, item in ipairs(actualItems) do
-        if Cleaner.canManuallyDelete(playerObj, item) then
+        if not Cleaner.canManuallyDelete(playerObj, item) then
+            skipped = skipped + 1
+        elseif #deletable < Cleaner.CONSTANTS.MANUAL_DELETE_LIMIT then
             deletable[#deletable + 1] = item
-            if #deletable >= Cleaner.CONSTANTS.MANUAL_DELETE_LIMIT then
-                break
-            end
         end
     end
 
@@ -148,7 +188,7 @@ local function onFillInventoryObjectContextMenu(playerNum, context, items)
     else
         label = getText("IGUI_MinidoracatCleaner_DeleteMulti", #deletable)
     end
-    context:addOption(label, deletable, showDeleteDialog, playerNum)
+    context:addOption(label, deletable, showDeleteDialog, playerNum, skipped)
 end
 
 -- ===== 家具放置紀錄（MP）=====

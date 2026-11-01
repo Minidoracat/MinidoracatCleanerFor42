@@ -23,15 +23,16 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [list]
 [*] [b]Where[/b]: anything within reach — inventory (nested bags too), cabinets, trunks and other vehicle containers, floor items.
 [*] [b]Safehouses[/b]: safehouse loot permissions apply in multiplayer.
-[*] [b]Cannot be deleted[/b]: favorites and items equipped, worn or on the hotbar/belt (no option shown).
+[*] [b]Cannot be deleted[/b]: favorites and items equipped, worn or on the hotbar/belt. With only these selected there is no "Delete" option; mixed with other items, the dialog says how many are skipped.
 [*] [b]Limit[/b]: up to 100 items per deletion.
 [/list]
 [h3]Confirmation[/h3]
 {{img:02-confirm-contains.jpg}}
 [list]
-[*] [b]Always confirmed first[/b]: every deletion asks before it happens.
-[*] [b]Containers with items[/b]: if a selected container still holds items (parcel, bag, key ring with keys…), the dialog says how many are destroyed with it.
+[*] [b]Always confirmed first[/b]: every deletion asks first and lists what is deleted (one line per item name; past 8 lines it says how many more kinds and items).
+[*] [b]Containers with items[/b]: if a selected container still holds items (parcel, bag, key ring with keys…), its line says how many are deleted with it.
 [*] [b]Empty key rings[/b]: can be deleted.
+[*] [b]Loaded capsules[/b]: with [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3820790323]Pack & Throw[/url] installed, if the selection (bags included) holds a loaded capsule or Pal Sphere, a second dialog names them after you press Delete. Only pressing Delete in both deletes; Cancel in the second keeps the whole selection.
 [/list]
 [h3]Multiplayer and logging[/h3]
 [list]
