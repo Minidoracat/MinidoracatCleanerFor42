@@ -18,7 +18,7 @@
   "IGUI_MinidoracatCleaner_CapsuleInBag": "%1、「%2」の中",
   "IGUI_MinidoracatCleaner_CapsuleMore": "ほか %1 個",
   "IGUI_MinidoracatCleaner_CapsuleUnchecked": "中身が多すぎて調べきれない袋があります。収納済みのカプセルかパルスフィアが入っているかもしれません。",
-  "IGUI_MinidoracatCleaner_CapsuleWarn": "元に戻せません。「キャンセル」を押すと、この選択は何も削除されません。",
+  "IGUI_MinidoracatCleaner_CapsuleWarn": "元に戻せません。「キャンセル」を押すと、選択したアイテムは一つも削除されません。",
   "IGUI_MinidoracatCleaner_CapsuleButton": "すべて削除",
   "IGUI_MinidoracatCleaner_WarnItems": "近くに捨てられたアイテムが多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",
   "IGUI_MinidoracatCleaner_WarnAnimals": "近くに清掃対象の動物が多すぎます。次回のスキャンでも上限超過なら清掃を開始します。",

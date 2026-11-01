@@ -18,7 +18,7 @@
   "IGUI_MinidoracatCleaner_CapsuleInBag": "%1, \"%2\" 안",
   "IGUI_MinidoracatCleaner_CapsuleMore": "그 외 %1개",
   "IGUI_MinidoracatCleaner_CapsuleUnchecked": "물건이 너무 많아 다 확인하지 못한 가방이 있습니다. 적재된 캡슐이나 팰 스피어가 들어 있을 수 있습니다.",
-  "IGUI_MinidoracatCleaner_CapsuleWarn": "되돌릴 수 없습니다. 취소를 누르면 이번 선택은 하나도 삭제되지 않습니다.",
+  "IGUI_MinidoracatCleaner_CapsuleWarn": "되돌릴 수 없습니다. 취소를 누르면 선택한 아이템은 하나도 삭제되지 않습니다.",
   "IGUI_MinidoracatCleaner_CapsuleButton": "모두 삭제",
   "IGUI_MinidoracatCleaner_WarnItems": "근처에 떨어진 아이템이 너무 많습니다. 다음 검사에서도 한도를 넘으면 정리를 시작합니다.",
   "IGUI_MinidoracatCleaner_WarnAnimals": "근처에 정리 대상 동물이 너무 많습니다. 다음 검사에서도 한도를 넘으면 정리를 시작합니다.",

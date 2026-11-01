@@ -6,7 +6,7 @@
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (contiene %3 objeto(s), también se eliminan)",
   "IGUI_MinidoracatCleaner_ConfirmMore": "Otros %1 tipos, %2 objetos en total",
   "IGUI_MinidoracatCleaner_ConfirmMoreContains": "Otros %1 tipos, %2 objetos en total (sus contenedores tienen %3 más, también se eliminan)",
-  "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "La selección incluye cápsulas o Esferas Pal cargadas. Las confirmarás en el siguiente paso.",
+  "IGUI_MinidoracatCleaner_ConfirmCapsuleNext": "La selección incluye cápsulas o Esferas Pal cargadas. Confirmarás su eliminación en el siguiente paso.",
   "IGUI_MinidoracatCleaner_ConfirmUncheckedNext": "Una bolsa tiene demasiados objetos para revisarla. Lo confirmarás en el siguiente paso.",
   "IGUI_MinidoracatCleaner_ConfirmSkipped": "No se eliminan (%1): objetos favoritos o equipados.",
   "IGUI_MinidoracatCleaner_ConfirmUndo": "No se puede deshacer.",
