@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "Удалить %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Удалить выбранные предметы (%1)",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Удаление теперь перечисляет каждый предмет. С Pack & Throw заполненные капсулы требуют ещё одного подтверждения.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Удалить выбранные предметы (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (предметов внутри: %3; они тоже будут удалены)",

@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "%1 löschen",
   "IGUI_MinidoracatCleaner_DeleteMulti": "%1 ausgewählte Gegenstände löschen",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Löschen listet jetzt jeden Gegenstand auf. Mit Pack & Throw fragen beladene Kapseln noch einmal nach.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Ausgewählte Gegenstände löschen (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (Inhalt: %3 Gegenstände; wird ebenfalls gelöscht)",

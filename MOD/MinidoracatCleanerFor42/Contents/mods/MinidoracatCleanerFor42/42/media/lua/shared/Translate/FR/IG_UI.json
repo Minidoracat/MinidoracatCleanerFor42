@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "Supprimer %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Supprimer les %1 objets sélectionnés",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
+  "IGUI_MinidoracatCleaner_WhatsNew": "La suppression liste chaque objet. Avec Pack & Throw, les capsules chargées demandent une confirmation de plus.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Supprimer les objets sélectionnés (%1) ?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (contient %3 objet(s), supprimés aussi)",

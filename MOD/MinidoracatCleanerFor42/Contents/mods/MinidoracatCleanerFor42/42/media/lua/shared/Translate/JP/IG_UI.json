@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "%1 を削除",
   "IGUI_MinidoracatCleaner_DeleteMulti": "選択した %1 個のアイテムを削除",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat クリーナー",
+  "IGUI_MinidoracatCleaner_WhatsNew": "削除の確認に削除するものが一覧で出ます。Pack & Throw の収納済みカプセルはもう一度確認します。",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "選択したアイテム（%1 個）を削除しますか？",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2（中身 %3 個も一緒に削除）",

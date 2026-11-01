@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "%1 삭제",
   "IGUI_MinidoracatCleaner_DeleteMulti": "선택한 아이템 %1개 삭제",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
+  "IGUI_MinidoracatCleaner_WhatsNew": "삭제 확인 창에 삭제할 항목이 목록으로 나옵니다. Pack & Throw의 적재된 캡슐은 한 번 더 확인합니다.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "선택한 아이템(%1개)을 삭제하시겠습니까?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (안에 든 %3개도 함께 삭제)",

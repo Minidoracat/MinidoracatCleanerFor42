@@ -1,6 +1,8 @@
 {
   "IGUI_MinidoracatCleaner_Delete": "删除 %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "删除选中的 %1 件物品",
+  "IGUI_MinidoracatCleaner_Name": "Minidoracat 清理器",
+  "IGUI_MinidoracatCleaner_WhatsNew": "删除确认框改成逐项列出；装了 Pack & Throw 时，删除装了车或动物的胶囊会再确认一次。",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "删除选中的物品（%1 件）？",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2（里面有 %3 件，一起删除）",

@@ -57,6 +57,23 @@ do
     end
 end
 
+-- 遊戲內更新概要（框架 rev 24，WhatsNew）：更新後第一次進遊戲在右上角跳這版的重點。
+-- 發布列車的 ready 用 regex 讀這段：四欄都寫字面字串、一欄一行；這版有寫新概要才把 since 改成本版
+-- （家族 conventions.md「遊戲內更新概要」、框架 AGENTS.md「下游 consumer」第 8 條）
+pcall(require, "MinidoracatUI/WhatsNew")
+do
+    local ui = MinidoracatUI and MinidoracatUI.v1
+    if ui and ui.API_MAJOR == 1 and (ui.API_REVISION or 0) >= 24 and ui.CAPABILITIES and ui.CAPABILITIES.whatsNew
+        and ui.WhatsNew then
+        ui.WhatsNew.register({
+            modId = "MinidoracatCleanerFor42",
+            since = "0.10.0",
+            name = "IGUI_MinidoracatCleaner_Name",
+            text = "IGUI_MinidoracatCleaner_WhatsNew",
+        })
+    end
+end
+
 -- 圓角填色。shape 直通框架（nil=四角圓、true/"roundTop"=上圓、"rect"=直角）。
 function Skin.fill(element, x, y, width, height, color, shape, alphaScale)
     if FW then
