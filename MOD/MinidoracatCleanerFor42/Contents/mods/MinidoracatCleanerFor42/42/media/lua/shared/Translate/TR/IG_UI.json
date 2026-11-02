@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "%1 sil",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Seçili %1 eşyayı sil",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Silme artık her eşyayı listeliyor. Pack & Throw ile dolu kapsüller bir kez daha onay ister.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Normal eşyalar onay sormadan silinir. Onay penceresi farenin yanında açılır ve ekranı karartmaz.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Seçili eşyalar silinsin mi (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (içindeki %3 eşya da silinir)",

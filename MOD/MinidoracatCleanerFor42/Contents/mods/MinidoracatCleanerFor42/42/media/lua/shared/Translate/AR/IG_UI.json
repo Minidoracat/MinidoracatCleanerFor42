@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "Eliminar %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Eliminar %1 objetos seleccionados",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Eliminar ahora lista cada objeto. Con Pack & Throw, las cápsulas cargadas piden otra confirmación.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Los objetos normales se borran sin preguntar. La confirmación se abre junto al ratón y ya no oscurece la pantalla.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "¿Eliminar los objetos seleccionados (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (contiene %3 objeto(s), también se eliminan)",

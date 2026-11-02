@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "Usuń %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Usuń zaznaczone przedmioty (%1)",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Usuwanie wymienia teraz każdy przedmiot. Z Pack & Throw pełne kapsuły wymagają drugiego potwierdzenia.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Zwykłe przedmioty usuwają się bez pytania. Okno potwierdzenia otwiera się przy kursorze i nie przyciemnia ekranu.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Usunąć zaznaczone przedmioty (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (zawiera przedmioty: %3, też zostaną usunięte)",

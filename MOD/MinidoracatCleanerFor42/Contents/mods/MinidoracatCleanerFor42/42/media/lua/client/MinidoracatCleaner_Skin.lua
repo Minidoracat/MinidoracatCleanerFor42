@@ -68,7 +68,7 @@ do
         and ui.WhatsNew then
         ui.WhatsNew.register({
             modId = "MinidoracatCleanerFor42",
-            since = "0.10.0",
+            since = "0.11.0",
             name = "IGUI_MinidoracatCleaner_Name",
             text = "IGUI_MinidoracatCleaner_WhatsNew",
         })

@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "Excluir %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Excluir %1 itens selecionados",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Excluir agora lista cada item. Com Pack & Throw, cápsulas carregadas pedem mais uma confirmação.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Itens comuns são apagados sem confirmação. A confirmação abre junto ao mouse e não escurece mais a tela.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Excluir os itens selecionados (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (contém %3 item(ns), excluídos também)",

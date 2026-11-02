@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "刪除 %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "刪除選取的 %1 件物品",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat 清理器",
-  "IGUI_MinidoracatCleaner_WhatsNew": "刪除確認框改成逐項列出；有裝 Pack & Throw 時，刪除裝了車或動物的膠囊會再確認一次。",
+  "IGUI_MinidoracatCleaner_WhatsNew": "刪除一般物品不再跳確認視窗。確認視窗開在滑鼠旁，畫面不再變暗，開著時照樣能用滑鼠攻擊。",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "刪除選取的物品（%1 件）？",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2（內有 %3 件，一起刪除）",
