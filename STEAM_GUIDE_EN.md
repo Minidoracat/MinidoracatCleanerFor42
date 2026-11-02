@@ -13,7 +13,7 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [*] [b]Required mod[/b]: [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url] on server and clients, listed before this mod in the server's Mods line.
 [/list]
 [olist]
-[*] [b]Delete[/b]: select items (multi-select works), right-click "Delete", confirm.
+[*] [b]Delete[/b]: select items (multi-select works), right-click "Delete"; containers with items inside ask first.
 [*] [b]Auto-cleanup[/b]: on by default; warning first, cleanup only if still over at the next check.
 [*] [b]Admins[/b]: sandbox settings (new game, hosting, or admin panel), pages "Minidoracat Cleaner - General / Items / Animals".
 [*] [b]Lists[/b]: right-click the ground, "Cleaner: List Manager...".
@@ -23,16 +23,17 @@ https://steamcommunity.com/sharedfiles/filedetails/?id=3779823349
 [list]
 [*] [b]Where[/b]: anything within reach — inventory (nested bags too), cabinets, trunks and other vehicle containers, floor items.
 [*] [b]Safehouses[/b]: safehouse loot permissions apply in multiplayer.
-[*] [b]Cannot be deleted[/b]: favorites and items equipped, worn or on the hotbar/belt. With only these selected there is no "Delete" option; mixed with other items, the dialog says how many are skipped.
-[*] [b]Limit[/b]: up to 100 items per deletion; select more and the dialog says how many are left this time.
+[*] [b]Cannot be deleted[/b]: favorites and items equipped, worn or on the hotbar/belt. With only these selected there is no "Delete" option; mixed with other items, you are told how many are skipped.
+[*] [b]Limit[/b]: up to 100 items per deletion; select more and you are told how many are left this time.
 [/list]
 [h3]Confirmation[/h3]
 {{img:02-confirm-contains.jpg}}
 [list]
-[*] [b]Always confirmed first[/b]: every deletion asks first and lists what is deleted (one line per item name; past 8 lines it says how many more kinds and items).
+[*] [b]When it asks[/b]: ordinary items are deleted right away, with no dialog; if you selected favorites, equipped items, or more than 100 items, a notification at the top right says how many are not deleted this time. Only a container that still holds items, or a capsule loaded with a vehicle or animal, opens the dialog, which lists what is deleted (one line per item name; past 8 lines it says how many more kinds and items).
+[*] [b]Does not block play[/b]: the dialog opens next to your mouse and does not darken the screen. With a mouse you can still attack and aim while it is open, so deal with the zombie first and answer it after. If what the dialog lists has changed when you press Delete (for example, you put a capsule into a bag you are deleting), the deletion is checked again: you are asked again if it still needs confirming; if only ordinary items are left, they are deleted right away.
 [*] [b]Containers with items[/b]: if a selected container still holds items (parcel, bag, key ring with keys…), its line says how many are deleted with it.
 [*] [b]Empty key rings[/b]: can be deleted.
-[*] [b]Loaded capsules[/b]: with [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3820790323]Pack & Throw[/url] installed, if the selection (bags included) holds a loaded capsule or Pal Sphere, a second dialog names them after you press Delete. Only pressing Delete in both deletes; Cancel in the second keeps the whole selection.
+[*] [b]Loaded capsules[/b]: with [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3820790323]Pack & Throw[/url] installed, if the selection (bags included) holds a loaded capsule or Pal Sphere, a second dialog names them after you press Delete. Only pressing Delete in both deletes; Cancel in the second keeps the whole selection. The second dialog also appears when a bag holds too many items to check completely.
 [/list]
 [h3]Multiplayer and logging[/h3]
 [list]

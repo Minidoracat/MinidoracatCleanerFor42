@@ -15,7 +15,7 @@ Sanitation service for the apocalypse: right-click to delete items from any cont
 
 [h2]🚀 Quick start[/h2]
 [olist]
-[*] Select items in your inventory or a nearby container, right-click "Delete" and confirm
+[*] Select items in your inventory or a nearby container and right-click "Delete"; containers with items inside ask first
 [*] Auto-cleanup works out of the box and warns nearby players first
 [*] Admins can tune the limits in sandbox settings or switch auto-cleanup off
 [*] Right-click the ground to open the list manager and add items or animals

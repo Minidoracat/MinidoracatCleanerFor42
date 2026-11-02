@@ -660,7 +660,8 @@ function Cleaner.logManualDelete(playerObj, removedByType, removed, contained)
     )
 end
 
--- 裝著東西的容器不可刪（避免連同內容物一起銷毀）；空容器可刪。
+-- 容器是否裝著東西：自動清理不收它（isSafeFloorCandidate，避免連同內容物一起銷毀），手動刪除選到它要先確認
+-- （ContextMenu 的 showDeleteDialog）；空容器兩邊都當一般物品。
 -- getInventory() 只存在於 InventoryContainer（InventoryContainer.java:49），
 -- 故先用 vanilla 慣用的 instanceof 判定（ISInventoryPane.lua:967 等）再取用。
 -- 註：所有鑰匙環（含 Memento 類的裝飾款，如 KeyRing_PineTree）都是 capacity 1 的容器且

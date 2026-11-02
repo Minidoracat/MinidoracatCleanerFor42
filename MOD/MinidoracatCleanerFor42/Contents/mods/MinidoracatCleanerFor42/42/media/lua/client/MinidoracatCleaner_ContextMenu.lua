@@ -121,38 +121,84 @@ local function capsuleText(found, unchecked)
     return table.concat(lines, "\n")
 end
 
--- 兩段確認：主框逐項列出；選取裡（含袋子裡）有 PackThrow 的已收膠囊時，主框按刪除後再跳膠囊框，
--- 點名整台車或動物，兩個都按刪除才送出。膠囊框按取消＝這一批都不刪。
--- 伺服器不擋膠囊（2026-11-02 使用者裁定：照舊能刪、另跳確認框、按鈕確認不打字）
+-- 選取（頂層）裡有沒有裝著東西的容器：刪它會連物品欄看不到的內容一起刪，要確認
+local function anyHasContents(items)
+    for _, item in ipairs(items) do
+        if Cleaner.hasContents(item) then
+            return true
+        end
+    end
+    return false
+end
+
+-- 不跳框直接刪時，主框原本寫的「不會刪除」改成右上角提示（同兩條譯文）
+local function notifyLeftOut(playerNum, skipped, over)
+    local playerObj = getSpecificPlayer(playerNum)
+    if over > 0 then
+        Skin.notify(playerObj, getText("IGUI_MinidoracatCleaner_ConfirmOverLimit",
+            tostring(Cleaner.CONSTANTS.MANUAL_DELETE_LIMIT), tostring(over)))
+    end
+    if skipped > 0 then
+        Skin.notify(playerObj, getText("IGUI_MinidoracatCleaner_ConfirmSkipped", tostring(skipped)))
+    end
+end
+
+-- 只有選取裡（含袋子裡）有 PackThrow 的已收膠囊、袋子沒檢查完，或有裝著東西的容器時才確認；
+-- 一般物品直接刪（2026-11-02 使用者裁定：手動刪除很頻繁，每次都跳框只會被直接按掉）。
+-- 確認分兩段：主框逐項列出；有膠囊時主框按刪除後再跳膠囊框，點名整台車或動物，兩個都按刪除才送出。
+-- 膠囊框按取消＝這一批都不刪。伺服器不擋膠囊（2026-11-02 使用者裁定：照舊能刪、另跳確認框、按鈕確認不打字）。
+-- 框不擋操作，開著時玩家照常能搬東西（例如把膠囊放進要刪的袋子）：每個框按刪除時重算一次，
+-- 和框上寫的不一樣就從頭重新確認，不照開框時的內容送出
 local function showDeleteDialog(items, playerNum, skipped, over)
     if #items == 0 or not getSpecificPlayer(playerNum) then
         return
     end
+    skipped, over = skipped or 0, over or 0
     local found, unchecked = Cleaner.findLoadedCapsules(items)
-    local needCapsuleStep = #found > 0 or unchecked
+    if #found == 0 and not unchecked and not anyHasContents(items) then
+        sendDelete(playerNum, items)
+        notifyLeftOut(playerNum, skipped, over)
+        return
+    end
+    local text = summaryText(items, skipped, over, found, unchecked)
+    -- 回傳現在的膠囊清單；主框（與 capText，膠囊框的內文）和看到的不一樣時從頭重新確認，回傳 nil
+    local function recheck(capText)
+        local nowFound, nowUnchecked = Cleaner.findLoadedCapsules(items)
+        if summaryText(items, skipped, over, nowFound, nowUnchecked) ~= text
+            or (capText and capsuleText(nowFound, nowUnchecked) ~= capText) then
+            showDeleteDialog(items, playerNum, skipped, over)
+            return nil
+        end
+        return nowFound, nowUnchecked
+    end
     Skin.confirm({
         playerNum = playerNum,
         title = getText("IGUI_MinidoracatCleaner_ConfirmTitle", tostring(#items)),
-        text = summaryText(items, skipped or 0, over or 0, found, unchecked),
+        text = text,
         confirmText = getText("IGUI_MinidoracatCleaner_ConfirmButton", tostring(#items)),
         cancelText = getText("UI_Cancel"),
         onResult = function(ok)
             if not ok then
                 return
             end
-            if not needCapsuleStep then
+            local nowFound, nowUnchecked = recheck(nil)
+            if not nowFound then
+                return
+            end
+            if #nowFound == 0 and not nowUnchecked then
                 sendDelete(playerNum, items)
                 return
             end
+            local capText = capsuleText(nowFound, nowUnchecked)
             Skin.confirm({
                 playerNum = playerNum,
-                title = getText(#found > 0 and "IGUI_MinidoracatCleaner_CapsuleTitle"
+                title = getText(#nowFound > 0 and "IGUI_MinidoracatCleaner_CapsuleTitle"
                     or "IGUI_MinidoracatCleaner_CapsuleUncheckedTitle"),
-                text = capsuleText(found, unchecked),
+                text = capText,
                 confirmText = getText("IGUI_MinidoracatCleaner_CapsuleButton"),
                 cancelText = getText("UI_Cancel"),
                 onResult = function(sure)
-                    if sure then
+                    if sure and recheck(capText) then
                         sendDelete(playerNum, items)
                     end
                 end,
@@ -174,8 +220,8 @@ local function onFillInventoryObjectContextMenu(playerNum, context, items)
     -- ISInventoryPane.lua:908-930
     local actualItems = ISInventoryPane.getActualItems(items)
     local deletable = {}
-    local skipped = 0 -- 最愛、裝備中：確認框寫出「不會刪除 N 件」。可刪的滿上限後照樣數完
-    local over = 0 -- 可刪但超過一次上限 MANUAL_DELETE_LIMIT：這次不帶進去，確認框寫出件數
+    local skipped = 0 -- 最愛、裝備中：主框或通知寫出「不會刪除 N 件」。可刪的滿上限後照樣數完
+    local over = 0 -- 可刪但超過一次上限 MANUAL_DELETE_LIMIT：這次不帶進去，主框或通知寫出件數
     for _, item in ipairs(actualItems) do
         if not Cleaner.canManuallyDelete(playerObj, item) then
             skipped = skipped + 1
@@ -196,7 +242,10 @@ local function onFillInventoryObjectContextMenu(playerNum, context, items)
     else
         label = getText("IGUI_MinidoracatCleaner_DeleteMulti", #deletable)
     end
-    context:addOption(label, deletable, showDeleteDialog, playerNum, skipped, over)
+    local option = context:addOption(label, deletable, showDeleteDialog, playerNum, skipped, over)
+    -- 一般物品不跳確認框，用原版垃圾袋圖示和其他選項區隔（寫法同原版 ISFarmingMenu.lua:123）；
+    -- 不用紅字：原版選單的紅字是「不能用」（ISContextMenu.lua:441-472）
+    option.iconTexture = getTexture("Item_Garbagebag")
 end
 
 -- ===== 家具放置紀錄（MP）=====
