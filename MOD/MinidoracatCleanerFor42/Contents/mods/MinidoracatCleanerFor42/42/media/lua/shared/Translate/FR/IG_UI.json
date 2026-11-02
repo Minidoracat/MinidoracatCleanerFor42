@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "Supprimer %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Supprimer les %1 objets sélectionnés",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Les objets ordinaires sont supprimés sans demander. La confirmation s'ouvre près de la souris, sans assombrir l'écran.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Objets ordinaires supprimés sans demander. La confirmation s'ouvre près de la souris, sans assombrir.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Supprimer les objets sélectionnés (%1) ?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (contient %3 objet(s), supprimés aussi)",

@@ -2,7 +2,7 @@
   "IGUI_MinidoracatCleaner_Delete": "Delete %1",
   "IGUI_MinidoracatCleaner_DeleteMulti": "Delete %1 selected items",
   "IGUI_MinidoracatCleaner_Name": "Minidoracat Cleaner",
-  "IGUI_MinidoracatCleaner_WhatsNew": "Ordinary items now delete without asking. The confirm dialog opens next to your mouse and no longer darkens the screen.",
+  "IGUI_MinidoracatCleaner_WhatsNew": "Ordinary items delete without asking. The confirm dialog opens by your mouse, no dark overlay.",
   "IGUI_MinidoracatCleaner_ConfirmTitle": "Delete the selected items (%1)?",
   "IGUI_MinidoracatCleaner_ConfirmRow": "%1 x %2",
   "IGUI_MinidoracatCleaner_ConfirmRowContains": "%1 x %2 (holds %3 items, deleted too)",
