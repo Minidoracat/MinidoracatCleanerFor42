@@ -1,11 +1,19 @@
-[h1]Minidoracat Cleaner for B42 42.21.0-0.11.0[/h1]
-[i]2026-11-03[/i]
+[h1]Minidoracat Cleaner for B42 42.22.2-0.11.1[/h1]
+[i]2026-11-10[/i]
+
+[b]English summary[/b]
+[list]
+[*] Fixed: on Build 42.22, "Removal cap: ranched (per farm)" and "Breeding cap: ranched (per farm)" (and their overrides) did nothing, and every farm check printed an error in the console. Both caps work again. Servers that leave these caps at the default were not affected.
+[*] Checked on Build 42.22.2: floor cleanup, manual delete, drop and move records, farm caps and the list manager were all tested in game. Everything else works as before, and no settings need to change.
+[/list]
 
 [h3]🔄 變更[/h3]
 [list]
-[*] [b]刪除一般物品不再跳確認視窗[/b]：選一般物品按「刪除」就直接刪。選到最愛、裝備中的物品，或一次選超過 100 件時，畫面右上的通知會寫出有幾件這次不會刪除。
-[*] [b]確認視窗不再擋操作[/b]：有玩家回報確認視窗讓畫面變暗、擋住角色，在室內很容易被偷襲。現在只有選到還裝著東西的容器，或裝了車或動物的膠囊時才跳確認視窗；視窗開在滑鼠旁邊，畫面不會變暗，用滑鼠時視窗開著照樣可以攻擊和瞄準。
-[*] [b]視窗開著時內容變了會再確認[/b]：按刪除時，如果視窗上列的內容變了（例如把膠囊放進要刪的袋子），會照現況重新處理，還要確認的再問一次。
-[*] [b]右鍵選單的「刪除」多了垃圾袋圖示[/b]，和其他選項分得開。
+[*] [b]對應 PZ 42.22.2[/b]：已在 42.22.2 實際測過自動清理、手動刪除、丟棄與搬移紀錄、農場上限和清單管理，其他功能照常運作，設定不用改。
 [/list]
-更新後重開遊戲生效，設定不用改。
+
+[h3]🔧 修正[/h3]
+[list]
+[*] [b]42.22 上農場的清除上限與繁殖上限沒有作用[/b]：有設「清除上限：圈養（每座農場）」或「繁殖上限：圈養（每座農場）」（或它們的覆寫）、世界上又有動物圈地時（單機也一樣），每次檢查農場都會出錯：超過上限的動物不會被清除，新的懷孕也不會被取消，console 一直出現錯誤訊息。現在恢復正常。這兩個上限維持預設的伺服器不受影響。
+[/list]
+伺服器更新後重開生效，設定不用改。

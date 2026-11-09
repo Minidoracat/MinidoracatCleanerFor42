@@ -4,7 +4,13 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
-## [Unreleased]
+## [42.22.2-0.11.1] - 2026-11-10
+
+### 變更
+
+- **對應 PZ 42.22.2**：已對照 42.22.2 的遊戲改動逐項檢查，並在 42.22.2 實際測過自動清理、手動刪除、丟棄與搬移紀錄、農場上限和設定介面。除了下面的農場問題，其他功能照常運作，設定不用改。
+
+> 技術要點：比對 42.21.0 → 42.22.2 反編譯快照與原版 Lua。本 MOD 呼叫的引擎方法、Lua 全域函式、事件、暴露類別和包裝的原版函式，只有 `DesignationZoneAnimal:getAnimals()` 改名；`IsoGridSquare:getObjects()` 從 `PZArrayList` 改回 `ArrayList`、`ItemContainer:getCharacter()` 改成迴圈，對本 MOD 的結果相同。`ISTransferAction:transferItem` 在 42.22 多了「把容器放進它自己裡面就不搬」的提早返回：單機在這種沒搬成的嘗試上仍會蓋一次操作章，無害，不處理。
 
 ### 修正
 
