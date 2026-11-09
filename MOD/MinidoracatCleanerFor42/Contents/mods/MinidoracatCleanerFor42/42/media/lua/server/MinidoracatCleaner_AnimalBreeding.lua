@@ -147,13 +147,17 @@ end
 -- ===== 一次走訪：整個元件所有群組的計數與候選 =====
 --
 -- caller 已付過唯一一次 getAllDZones（元件成員清單）；這裡**逐成員讀 per-zone getter**：
--- zone:getAnimals()/getHutchs()/getFoodOnGround()（DesignationZoneAnimal.java:395/:431/:475）。
+-- zone:getAnimalsInZone()/getHutchs()/getFoodOnGround()（42.22.2 DesignationZoneAnimal.java:395/:431/:474）。
 -- 刻意不用 getAnimalsConnected()/getHutchsConnected()/getFoodOnGroundConnected()——那三個
--- 各自內部再跑一次 getAllDZones 遞迴（:437/:466/:481），一個元件就付 4 次；contains 去重
--- 還是 O(A²)（:444）。改逐成員讀＋Lua seen-set 去重＝1 次遞迴、O(A)。
+-- 各自內部再跑一次 getAllDZones 遞迴（:437/:465/:480），一個元件就付 4 次；contains 去重
+-- 還是 O(A²)（:443）。改逐成員讀＋Lua seen-set 去重＝1 次遞迴、O(A)。
 --
--- **per-zone getter 回的是引擎內部清單的直接參照，只能讀、絕不能改**（getAnimalsConnected
+-- **getHutchs/getFoodOnGround 回的是引擎內部清單的直接參照，只能讀、絕不能改**（getAnimalsConnected
 -- 之所以安全 addAll 是因為它回新 ArrayList；這裡沒有那層複製）。
+--
+-- 圈地動物：42.22 把 getAnimals()（回內部 ArrayList）改名 getAnimalsInZone()，回 HashSet 複本、
+-- 沒有 get(i)（:395-396；42.21.0 同行是 ArrayList getAnimals()）。兩版都只當 addAll 的引數，
+-- 收進 ArrayList 再用索引走——versionMin 仍是 42.20.2，所以留舊名當退路。
 --
 -- 雞舍內動物的橋接：getAnimalInside() 回 HashMap（public class，方法可呼叫），但
 -- values() 回傳 package-private 的 HashMap$Values——**只能當引數、不能當 receiver**
@@ -200,7 +204,7 @@ local function collectComponent(component)
             return
         end
         seen[animal] = true
-        -- 掛鉤（屠宰架）上的不算農場人口：與 getAnimalsConnected 的過濾一致（:444）
+        -- 掛鉤（屠宰架）上的不算農場人口：與 getAnimalsConnected 的過濾一致（:443）
         if animal:isOnHook() then
             return
         end
@@ -272,11 +276,11 @@ local function collectComponent(component)
     for m = 0, component:size() - 1 do
         local member = component:get(m)
         if member then
-            local animals = member:getAnimals()
-            if animals then
-                for i = 0, animals:size() - 1 do
-                    tallyAnimal(animals:get(i), false)
-                end
+            local getAnimals = member.getAnimalsInZone or member.getAnimals
+            local animals = ArrayList.new()
+            animals:addAll(getAnimals(member))
+            for i = 0, animals:size() - 1 do
+                tallyAnimal(animals:get(i), false)
             end
 
             local hutches = member:getHutchs()

@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [Unreleased]
+
+### 修正
+
+- **遊戲更新到 42.22 後，農場的清除上限與繁殖上限沒有作用**：有設定農場清除上限或繁殖上限、世界上又有動物圈地的伺服器（單機也一樣），每次檢查農場都會出錯：農場裡超過上限的動物不會被清除，新的懷孕也不會被取消，console 一直出現錯誤訊息。現在恢復正常。沒有設定這兩個上限（預設）的伺服器不受影響。伺服器更新後重新啟動生效。
+
+> 技術要點：42.22 把 `DesignationZoneAnimal:getAnimals()` 改名 `getAnimalsInZone()`，回傳 `HashSet` 複本、沒有 `get(i)`（DesignationZoneAnimal.java:395-396）。農場走訪改成把它 `addAll` 進 `ArrayList` 再逐一讀取；遊戲版本沒有新名字時照舊用 `getAnimals()`，`versionMin` 不變。
+
 ## [42.21.0-0.11.0] - 2026-11-03
 
 ### 變更

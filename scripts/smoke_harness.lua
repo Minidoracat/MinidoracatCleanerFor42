@@ -270,6 +270,14 @@ local function javaList(items)
     return list
 end
 
+-- java.util.HashSet 的形狀：size()/iterator()，**沒有 get(i)**；Lua 端只能當 addAll 引數或走 iterator。
+-- 42.22 DesignationZoneAnimal.getAnimalsInZone() 回這個（DesignationZoneAnimal.java:395-396）
+local function javaSet(items)
+    local set = javaList(items)
+    set.get = nil
+    return set
+end
+
 -- java.util.ArrayList 的最小暴露：AnimalBreeding 用 ArrayList.new() 當橋接容器
 -- （getAnimalInside():values() 回 package-private 的 HashMap$Values，只能當引數不能當
 -- receiver）。vanilla Lua 大量用例（ISItemSlot.lua:414 等）
@@ -638,11 +646,12 @@ end
 
 -- opts：id / x / y / z / animals / hutches / ground / component
 -- component 省略時就是自己一個元件。
--- **per-zone getter 忠於引擎**：getAnimals/getHutchs/getFoodOnGround 回引擎內部清單的
--- 直接參照（DesignationZoneAnimal.java:395/:431/:475，無複製）——mock 回包在 javaList
--- 裡的同一份 opts 表，生產程式碼若誤 addAll 就會污染 fixture 而被斷言抓到。
--- getAnimals 過濾已移除的動物：animal:remove() → removeFromWorld → dZone.removeAnimal
--- （IsoAnimal.java:1226-1228），移除後就不在 zone.animals 裡
+-- **per-zone getter 忠於引擎**：getHutchs/getFoodOnGround 回引擎內部清單的直接參照
+-- （DesignationZoneAnimal.java:431/:474，無複製）——mock 回包在 javaList 裡的同一份 opts 表，
+-- 生產程式碼若誤 addAll 就會污染 fixture 而被斷言抓到。getAnimalsInZone 是 42.22 的名字
+-- （42.21 叫 getAnimals），回 HashSet 複本、沒有 get(i)（:395-396）——mock 只給新名字與 javaSet，
+-- 退回舊名或對它 get(i) 都會炸。它過濾已移除的動物：animal:remove() → removeFromWorld →
+-- dZone.removeAnimal（IsoAnimal.java:1226-1228），移除後就不在 zone.animals 裡
 function makeTestZone(opts)
     local zone
     zone = {
@@ -653,14 +662,14 @@ function makeTestZone(opts)
         getZ = function() return opts.z or 0 end,
         getW = function() return opts.w or 10 end,
         getH = function() return opts.h or 10 end,
-        getAnimals = function()
+        getAnimalsInZone = function()
             local alive = {}
             for _, animal in ipairs(opts.animals or {}) do
                 if not animal.isGone or not animal.isGone() then
                     alive[#alive + 1] = animal
                 end
             end
-            return javaList(alive)
+            return javaSet(alive)
         end,
         getHutchs = function() return javaList(opts.hutches or {}) end,
         getFoodOnGround = function()
