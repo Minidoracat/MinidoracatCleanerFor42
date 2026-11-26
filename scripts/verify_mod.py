@@ -854,7 +854,8 @@ else:
                              "不傳的參數改成 ... 接、原樣轉給原版；計時動作的 new 例外（多人只送固定參數，見該行說明）；"
                              "確定呼叫的是 Java 方法才 python scripts/verify_mod.py --rebase-args"])
         else:
-            _stale = sum(max(0, n - len(_now.get(k, ()))) for k, n in _base.items())
+            # 沒有原版 Lua 時少報的是沒檢查，不是改掉了
+            _stale = sum(max(0, n - len(_now.get(k, ()))) for k, n in _base.items()) if _vanilla else 0
             ok(f"{_t}（新增 0 處；既有 {_total} 處記在 baseline"
                + (f"；baseline 多記 {_stale} 處已不再報，python scripts/verify_mod.py --rebase-args 可縮小）" if _stale else "）"))
 
