@@ -98,6 +98,7 @@ for _, mode in ipairs({ "SP", "MP client", "dedicated" }) do
                 getModData = function() return md end,
                 hasModData = function() return true end,
                 getType = function() return "Stone" end,
+                getID = function() return 1 end,
                 getWorldItem = function(self) return self.world end,
                 setWorldItem = function(self, world) self.world = world end,
                 setJobDelta = function() end,
@@ -122,6 +123,8 @@ for _, mode in ipairs({ "SP", "MP client", "dedicated" }) do
         env.sendRemoveItemFromContainer = function() end
         env.removeItemTransaction = function() end
         env.getPlayerData = function() return nil end
+        -- 42.22 原版 transferItem 開頭先問「目的容器是否在被搬的物品裡」（ISTransferAction.lua:96）；fixture 是石頭，恆為否。
+        env.ItemContainer = { chainContainsContainingItem = function() return false end }
         local function stamped(obj)
             local who, when = cleaner.readTouch(obj)
             return cleaner.readDrop(obj) == "tester" and who == "tester" and when == 7200

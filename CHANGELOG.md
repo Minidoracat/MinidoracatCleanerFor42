@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [Unreleased]
+
+### 修正
+
+- **少數情況下通知內容或外觀可能出錯**：遊戲的 Lua 引擎有時不把沒傳的參數當成「沒有」，而是讀到前一次計算留下的值。自動清理物品的通知可能因此多出不正確的「剩餘 N」，提示的顏色或清單管理器的外框也可能不對。現在這幾處都改成不受影響的寫法。實測沒有遇到，屬於預防性修正，設定不用改。
+
+> 技術要點：Kahlua 呼叫一般 Lua 函式時，少傳的固定參數不保證是 nil（`LuaCallFrame.java:105-106` 只清多傳的參數），可能讀到堆疊上的殘值。`Skin.fill`／`Skin.border` 的 `shape, alphaScale`、`Skin.notify` 的 `kind`、`Cleaner.parseList` 的 `fallback`、`Cleaner.warnPlayerOnly` 的 `scope`、`Cleaner.notifyCleaned` 的 `scope, remaining` 改用 `...` 接（`OP_VARARG` 會把不足的補成 nil）。由家族 `verify_mod.py` 第 1c 項抓出。
+
 ## [42.22.2-0.11.1] - 2026-11-10
 
 ### 變更
