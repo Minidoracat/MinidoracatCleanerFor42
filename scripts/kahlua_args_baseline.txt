@@ -7,5 +7,3 @@
 1	server/MinidoracatCleaner_WorldScanner.lua|makeJob|2<3
 1	server/MinidoracatCleaner_WorldScanner.lua|selectCandidates|5<6
 2	shared/MinidoracatCleaner_Core.lua|notifyNearby|3<4
-1	shared/MinidoracatCleaner_Core.lua|parseList|1<2
-2	shared/MinidoracatCleaner_Core.lua|parseList|1~2|Cleaner.getOption

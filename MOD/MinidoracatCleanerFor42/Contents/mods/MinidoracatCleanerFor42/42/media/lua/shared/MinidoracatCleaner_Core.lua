@@ -206,7 +206,9 @@ end
 -- 再經同一個 lexer 載入（SandboxOptions.java:822），檔案裡的全形逗號讀進來就是 "\f"。
 local FULLWIDTH_COMMA = "\239\188\140"
 
-function Cleaner.parseList(value, fallback)
+-- fallback 選用、用 ... 接：Kahlua 少傳的固定參數不保證是 nil（家族 pitfalls「選用參數用 ... 接」）。
+function Cleaner.parseList(value, ...)
+    local fallback = ...
     local result = {}
     local text = trim(value)
     if text == "" then
@@ -1128,7 +1130,9 @@ local function notifyPlayer(playerObj, command, payload, clientHandler)
     end
 end
 
-function Cleaner.warnPlayerOnly(playerObj, kind, detail, count, limit, scope)
+-- scope 只有動物傳（物品沒有），選用、用 ... 接（同 parseList）。
+function Cleaner.warnPlayerOnly(playerObj, kind, detail, count, limit, ...)
+    local scope = ...
     notifyPlayer(playerObj, "warn",
         { kind = kind, detail = detail, count = count, limit = limit, scope = scope },
         Cleaner.showWarning)
@@ -1170,7 +1174,9 @@ function Cleaner.isFloorCleaningDisabled()
     return true
 end
 
-function Cleaner.notifyCleaned(kind, detail, count, x, y, z, scope, remaining)
+-- scope、remaining 只有動物傳，選用、用 ... 接（同 parseList）；remaining 讀到殘值會讓物品通知多出「剩餘 N」。
+function Cleaner.notifyCleaned(kind, detail, count, x, y, z, ...)
+    local scope, remaining = ...
     notifyNearby("cleaned", { kind = kind, detail = detail, count = count, x = x, y = y, z = z, scope = scope, remaining = remaining }, Cleaner.showCleaned)
 end
 

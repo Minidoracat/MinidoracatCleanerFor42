@@ -76,7 +76,9 @@ do
 end
 
 -- 圓角填色。shape 直通框架（nil=四角圓、true/"roundTop"=上圓、"rect"=直角）。
-function Skin.fill(element, x, y, width, height, color, shape, alphaScale)
+-- shape、alphaScale 選用、用 ... 接：Kahlua 少傳的固定參數不保證是 nil（家族 pitfalls「選用參數用 ... 接」）。
+function Skin.fill(element, x, y, width, height, color, ...)
+    local shape, alphaScale = ...
     if FW then
         FW.fill(element, x, y, width, height, color, shape, alphaScale)
         return
@@ -85,8 +87,9 @@ function Skin.fill(element, x, y, width, height, color, shape, alphaScale)
         (color.a or 1) * (alphaScale or 1), color.r, color.g, color.b)
 end
 
--- 1px 圓角邊框。
-function Skin.border(element, x, y, width, height, color, shape, alphaScale)
+-- 1px 圓角邊框。shape、alphaScale 同 fill。
+function Skin.border(element, x, y, width, height, color, ...)
+    local shape, alphaScale = ...
     if FW then
         FW.border(element, x, y, width, height, color, shape, alphaScale)
         return
@@ -99,8 +102,9 @@ end
 Skin.VirtualList = VLIST
 
 -- 通知：框架 Toast（右上滑入堆疊，跨 MOD 共用疊放不重疊）；缺席退 halo。
--- kind："ok"（綠）/"error"（紅）/nil（一般）。playerObj 允許 nil（此時只出 Toast）。
-function Skin.notify(playerObj, message, kind)
+-- kind："ok"（綠）/"error"（紅）/nil（一般），選用、用 ... 接（同 fill）。playerObj 允許 nil（此時只出 Toast）。
+function Skin.notify(playerObj, message, ...)
+    local kind = ...
     if TOAST then
         local colors = nil
         if kind == "error" then
